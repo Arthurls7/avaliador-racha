@@ -1,26 +1,41 @@
+import zlib
 from datetime import datetime
 from functools import wraps
 
 from django.contrib import messages
-from django.http import Http404
+from django.http import FileResponse, Http404
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from . import armazenamento as arm
-from .notas import OPCOES_NOTA, formatar, media_ataque_defesa, notas_por_ranking, resultados
+from .notas import OPCOES_NOTA, formatar, ler_nota, resultados
 
-MODOS = {"ranking": "Ranking", "ataque_defesa": "Ataque e defesa"}
+# cores do círculo com as iniciais de quem ainda não tem foto (todas com bom contraste para texto branco)
+CORES = ["#d1495b", "#00798c", "#30638e", "#6a4c93", "#2b9348", "#c8553d", "#3d5a80", "#b5179e", "#7c6a0a"]
 
 
-def _pessoa_ou_404(pessoa_id):
-    pessoa = arm.buscar_pessoa(pessoa_id)
+def _visual(pessoa):
+    """Acrescenta o que o template precisa para desenhar o avatar."""
+    palavras = pessoa["nome"].split()
+    iniciais = palavras[0][0] + (palavras[-1][0] if len(palavras) > 1 else "")
+    return {
+        **pessoa,
+        "iniciais": iniciais.upper(),
+        "cor": CORES[zlib.crc32(pessoa["id"].encode()) % len(CORES)],
+        "foto_url": reverse("votacao:foto", args=[pessoa["foto"]]) if pessoa.get("foto") else "",
+    }
+
+
+def _jogador_ou_volta(request, pessoa_id):
+    pessoa = arm.buscar_jogador(pessoa_id)
     if not pessoa:
-        raise Http404("Pessoa não encontrada.")
-    return pessoa
+        messages.error(request, "Essa pessoa não está na lista desta semana.")
+    return _visual(pessoa) if pessoa else None
 
 
 def _outros(pessoa_id):
-    return [p for p in arm.pessoas() if p["id"] != pessoa_id]
+    return [_visual(p) for p in arm.jogadores() if p["id"] != pessoa_id]
 
 
 def _data(registro):
@@ -29,110 +44,54 @@ def _data(registro):
     return datetime.fromisoformat(registro["data"]).strftime("%d/%m às %H:%M")
 
 
-def _texto_nota(valor):
-    return None if valor is None else f"{valor:g}"
-
-
-def _ler_nota(texto):
-    try:
-        valor = float((texto or "").replace(",", "."))
-    except ValueError:
-        return None
-    return valor if 0 <= valor <= 5 else None
+def foto(request, arquivo):
+    if not arm.ARQUIVO_FOTO.match(arquivo):
+        raise Http404
+    caminho = arm.pasta_fotos() / arquivo
+    if not caminho.is_file():
+        raise Http404
+    resposta = FileResponse(open(caminho, "rb"))
+    resposta["Cache-Control"] = "public, max-age=31536000, immutable"  # o nome muda quando a foto muda
+    return resposta
 
 
 # ---------- quem vai avaliar ----------
 
 def inicio(request):
     avaliacoes = arm.avaliacoes()
-    pessoas = [{**p, "avaliou": p["id"] in avaliacoes} for p in arm.pessoas()]
+    pessoas = [{**_visual(p), "avaliou": p["id"] in avaliacoes} for p in arm.jogadores()]
     return render(request, "votacao/inicio.html", {"pessoas": pessoas})
 
 
-def escolher_modo(request, pessoa_id):
-    pessoa = _pessoa_ou_404(pessoa_id)
-    anterior = arm.avaliacoes().get(pessoa_id)
-    return render(request, "votacao/escolher_modo.html", {
-        "pessoa": pessoa,
-        "tem_outros": bool(_outros(pessoa_id)),
-        "anterior": anterior,
-        "anterior_modo": MODOS.get(anterior["modo"]) if anterior else "",
-        "anterior_data": _data(anterior),
-    })
-
-
-def avaliar_ranking(request, pessoa_id):
-    pessoa = _pessoa_ou_404(pessoa_id)
-    outros = _outros(pessoa_id)
-    if not outros:
-        return redirect("votacao:escolher_modo", pessoa_id=pessoa_id)
-    anterior = arm.avaliacoes().get(pessoa_id)
-
-    if request.method == "POST":
-        ordem = request.POST.getlist("ranking")
-        if len(ordem) != len(outros) or set(ordem) != {p["id"] for p in outros}:
-            messages.error(request, "O ranking precisa ter todo mundo da lista, uma vez cada. Confira e salve de novo.")
-            return redirect("votacao:ranking", pessoa_id=pessoa_id)
-        arm.salvar_avaliacao(pessoa_id, {
-            "modo": "ranking",
-            "ranking": ordem,
-            "notas": notas_por_ranking(ordem),
-        })
-        messages.success(request, f"Valeu, {pessoa['nome']}! Seu ranking foi salvo.")
+def avaliar(request, pessoa_id):
+    pessoa = _jogador_ou_volta(request, pessoa_id)
+    if not pessoa:
         return redirect("votacao:inicio")
-
-    ranking_anterior = anterior["ranking"] if anterior and anterior["modo"] == "ranking" else []
-    return render(request, "votacao/ranking.html", {
-        "pessoa": pessoa,
-        "anterior": anterior,
-        "dados_js": {"pessoas": outros, "ranking": ranking_anterior},
-    })
-
-
-def avaliar_notas(request, pessoa_id):
-    pessoa = _pessoa_ou_404(pessoa_id)
     outros = _outros(pessoa_id)
-    if not outros:
-        return redirect("votacao:escolher_modo", pessoa_id=pessoa_id)
     anterior = arm.avaliacoes().get(pessoa_id)
+    # avaliações antigas (ranking, ataque/defesa) podem ter notas quebradas; só preenche as inteiras
+    notas = {pid: int(v) for pid, v in (anterior or {}).get("notas", {}).items() if v in OPCOES_NOTA}
+    erro = None
 
-    ataque, defesa, erro = {}, {}, None
-    if anterior and anterior["modo"] == "ataque_defesa":
-        ataque, defesa = anterior["ataque"], anterior["defesa"]
-
-    if request.method == "POST":
-        ataque, defesa, faltando = {}, {}, []
+    if request.method == "POST" and outros:
+        notas, faltando = {}, []
         for p in outros:
-            a = _ler_nota(request.POST.get(f"ataque_{p['id']}"))
-            d = _ler_nota(request.POST.get(f"defesa_{p['id']}"))
-            if a is not None:
-                ataque[p["id"]] = a
-            if d is not None:
-                defesa[p["id"]] = d
-            if a is None or d is None:
+            valor = ler_nota(request.POST.get(f"nota_{p['id']}"))
+            if valor is None:
                 faltando.append(p["nome"])
+            else:
+                notas[p["id"]] = valor
         if not faltando:
-            arm.salvar_avaliacao(pessoa_id, {
-                "modo": "ataque_defesa",
-                "ataque": ataque,
-                "defesa": defesa,
-                "notas": {pid: media_ataque_defesa(ataque[pid], defesa[pid]) for pid in ataque},
-            })
-            messages.success(request, f"Valeu, {pessoa['nome']}! Suas notas foram salvas.")
+            arm.salvar_avaliacao(pessoa_id, {"notas": notas})
+            messages.success(request, f"Valeu, {pessoa['nome']}! Suas notas foram salvas. 🎉")
             return redirect("votacao:inicio")
-        erro = "Faltou dar nota de ataque e defesa para: " + ", ".join(faltando) + "."
+        erro = "Faltou dar nota para: " + ", ".join(faltando) + "."
 
-    linhas = [{
-        "pessoa": p,
-        "ataque": _texto_nota(ataque.get(p["id"])),
-        "defesa": _texto_nota(defesa.get(p["id"])),
-    } for p in outros]
-    opcoes = [(_texto_nota(v), _texto_nota(v).replace(".", ",")) for v in OPCOES_NOTA]
-    return render(request, "votacao/notas.html", {
+    return render(request, "votacao/avaliar.html", {
         "pessoa": pessoa,
-        "anterior": anterior,
-        "linhas": linhas,
-        "opcoes": opcoes,
+        "linhas": [{"pessoa": p, "nota": notas.get(p["id"])} for p in outros],
+        "opcoes": OPCOES_NOTA,
+        "anterior_data": _data(anterior),
         "erro": erro,
     })
 
@@ -172,27 +131,70 @@ def painel_sair(request):
 
 @_exige_admin
 def painel(request):
-    pessoas = arm.pessoas()
-    linhas = resultados(pessoas, arm.avaliacoes())
+    cadastro = [_visual(p) for p in arm.pessoas()]
+    linhas = resultados([p for p in cadastro if p["joga"]], arm.avaliacoes())
     for linha in linhas:
         linha["nota_fmt"] = formatar(linha["nota"])
-        linha["ataque_fmt"] = formatar(linha["ataque"])
-        linha["defesa_fmt"] = formatar(linha["defesa"])
-        if linha["avaliou"]:
-            linha["avaliou_modo"] = MODOS.get(linha["avaliou"]["modo"], "")
-            linha["avaliou_data"] = _data(linha["avaliou"])
+        linha["avaliou_data"] = _data(linha["avaliou"])
     return render(request, "votacao/painel.html", {
         "linhas": linhas,
         "ja_avaliaram": sum(1 for linha in linhas if linha["avaliou"]),
-        "texto_nomes": "\n".join(p["nome"] for p in pessoas),
+        "cadastro": cadastro,
     })
 
 
 @_exige_admin
 @require_POST
-def painel_pessoas(request):
-    lista = arm.definir_pessoas(arm.limpar_nomes(request.POST.get("nomes", "")))
-    messages.success(request, f"Lista salva com {len(lista)} pessoa(s).")
+def painel_adicionar(request):
+    nomes = arm.limpar_nomes(request.POST.get("nomes", ""))
+    if not nomes:
+        messages.error(request, "Escreva pelo menos um nome.")
+        return redirect("votacao:painel")
+    novos, existentes = arm.adicionar_pessoas(nomes, somente_estes=bool(request.POST.get("somente_estes")))
+    partes = []
+    if novos:
+        partes.append(f"{novos} cadastrado(s) agora")
+    if existentes:
+        partes.append(f"{existentes} já estava(m) no cadastro")
+    messages.success(request, "Lista da semana atualizada: " + " e ".join(partes) + ".")
+    return redirect("votacao:painel")
+
+
+@_exige_admin
+@require_POST
+def painel_cadastro(request):
+    ids = set(request.POST.getlist("ids"))
+    nomes = {pid: request.POST.get(f"nome_{pid}", "") for pid in ids}
+    repetidos = arm.salvar_cadastro(ids, nomes, set(request.POST.getlist("joga")))
+    for nome in repetidos:
+        messages.error(request, f"Já existe alguém chamado {nome}; esse nome não foi trocado.")
+
+    fotos_ruins = []
+    for pid in ids:
+        arquivo = request.FILES.get(f"foto_{pid}")
+        if arquivo and not arm.salvar_foto(pid, arquivo):
+            fotos_ruins.append(arquivo.name)
+    if fotos_ruins:
+        messages.error(request, "Não deu para usar estas fotos (precisa ser JPG, PNG ou WebP de até 10 MB): "
+                       + ", ".join(fotos_ruins))
+    messages.success(request, "Cadastro salvo.")
+    return redirect("votacao:painel")
+
+
+@_exige_admin
+@require_POST
+def painel_remover_foto(request):
+    arm.remover_foto(request.POST.get("id", ""))
+    messages.success(request, "Foto removida.")
+    return redirect("votacao:painel")
+
+
+@_exige_admin
+@require_POST
+def painel_excluir(request):
+    pessoa = arm.excluir_pessoa(request.POST.get("id", ""))
+    if pessoa:
+        messages.success(request, f"{pessoa['nome']} foi excluído(a) do cadastro.")
     return redirect("votacao:painel")
 
 

@@ -1,19 +1,40 @@
 {% extends "votacao/base.html" %}
 {% block titulo %}Quem é você?{% endblock %}
+{% block estilo %}
+  .grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 12px; margin: 16px 0; }
+  .jogador { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px;
+             padding: 18px 8px 14px; background: #fff; border: 2px solid transparent; border-radius: var(--raio);
+             box-shadow: var(--sombra); color: var(--texto); text-decoration: none; text-align: center;
+             transition: transform .12s, border-color .12s; }
+  .jogador:hover { border-color: var(--verde); transform: translateY(-2px); }
+  .jogador:active { transform: scale(.96); }
+  .jogador .nome { font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+  .jogador .selo { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%;
+                   display: grid; place-items: center; background: var(--verde); color: #fff; font-size: .8rem;
+                   font-weight: 800; box-shadow: 0 0 0 2px #fff; }
+  .vazio { text-align: center; padding: 32px 16px; }
+  .vazio .grande { font-size: 3rem; }
+{% endblock %}
 {% block conteudo %}
-<h1>Quem é você?</h1>
 {% if pessoas %}
-  <p class="suave">Toque no seu nome para avaliar os outros.</p>
+  <h1>Quem é você? 👋</h1>
+  <p class="suave">Toque em você para avaliar a galera do racha desta semana.</p>
   <div class="grade">
     {% for p in pessoas %}
-      <a class="pessoa" href="{% url 'votacao:escolher_modo' p.id %}">
-        <span>{{ p.nome }}</span>{% if p.avaliou %}<span class="ok" title="Já avaliou">✓</span>{% endif %}
+      <a class="jogador" href="{% url 'votacao:avaliar' p.id %}">
+        {% include "votacao/_avatar.html" with p=p tamanho="grande" %}
+        <span class="nome">{{ p.nome }}</span>
+        {% if p.avaliou %}<span class="selo" title="Já avaliou">✓</span>{% endif %}
       </a>
     {% endfor %}
   </div>
-  <p class="suave pequeno">✓ = já avaliou. Dá para avaliar de novo; a nova avaliação substitui a anterior.</p>
+  <p class="suave pequeno centro">✓ = já avaliou · dá para avaliar de novo quando quiser</p>
 {% else %}
-  <div class="cartao">Ninguém cadastrado ainda. O administrador precisa cadastrar a lista de pessoas.</div>
+  <div class="cartao vazio">
+    <div class="grande">🥅</div>
+    <h1>A lista desta semana ainda não saiu</h1>
+    <p class="suave">Assim que o organizador montar a lista, os nomes aparecem aqui.</p>
+  </div>
 {% endif %}
-<footer><a href="{% url 'votacao:painel' %}">Área do administrador</a></footer>
+<footer><a href="{% url 'votacao:painel' %}">Área do organizador</a></footer>
 {% endblock %}

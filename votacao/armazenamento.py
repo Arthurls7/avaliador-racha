@@ -2,10 +2,14 @@
 
 dados/logins.json
     {"admin": {"usuario": "...", "senha": "<hash>"},
-     "pessoas": [{"id": "joao-silva", "nome": "João Silva"}, ...]}
+     "pessoas": [{"id": "joao-silva", "nome": "João Silva", "foto": "joao-silva-1732391234567.jpg",
+                  "joga": true}, ...]}
+    "pessoas" é o cadastro de todo mundo que já jogou; "joga" marca quem está na lista da semana.
 
 dados/avaliacoes.json
     {"avaliacoes": {"<id de quem avaliou>": {...registro...}, ...}}
+
+As fotos ficam em MEDIA_ROOT/fotos/.
 """
 
 import copy
@@ -14,6 +18,8 @@ import os
 import re
 import tempfile
 import threading
+import time
+import unicodedata
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +37,7 @@ except ImportError:
 LOGINS = "logins.json"
 AVALIACOES = "avaliacoes.json"
 FUSO = ZoneInfo("America/Maceio")
+TAMANHO_MAX_FOTO = 10 * 1024 * 1024
 
 _PADRAO = {
     LOGINS: {"admin": None, "pessoas": []},
@@ -67,6 +74,7 @@ def editar(arquivo):
     """Lê o arquivo, deixa o bloco alterar os dados e grava no final.
 
     A trava evita que duas pessoas salvando ao mesmo tempo apaguem a avaliação uma da outra.
+    Não chame editar() dentro de outro editar().
     """
     with _trava_thread, open(_pasta() / ".trava", "w") as trava:
         if fcntl:
@@ -80,15 +88,12 @@ def agora():
     return datetime.now(FUSO).isoformat(timespec="seconds")
 
 
-# ---------- logins.json ----------
+def _ordem_alfabetica(nome):
+    sem_acento = unicodedata.normalize("NFKD", nome).encode("ascii", "ignore").decode()
+    return sem_acento.casefold()
 
-def pessoas():
-    return ler(LOGINS)["pessoas"]
 
-
-def buscar_pessoa(pessoa_id):
-    return next((p for p in pessoas() if p["id"] == pessoa_id), None)
-
+# ---------- admin ----------
 
 def admin_configurado():
     return bool(ler(LOGINS).get("admin"))
@@ -102,6 +107,23 @@ def conferir_admin(usuario, senha):
 def definir_admin(usuario, senha):
     with editar(LOGINS) as dados:
         dados["admin"] = {"usuario": usuario, "senha": make_password(senha)}
+
+
+# ---------- cadastro e lista da semana ----------
+
+def pessoas():
+    """Cadastro completo, em ordem alfabética."""
+    # quem foi cadastrado antes de existir "joga"/"foto" estava na lista, então joga
+    return [{"foto": None, "joga": True, **p} for p in ler(LOGINS)["pessoas"]]
+
+
+def jogadores():
+    """Só quem está na lista da semana."""
+    return [p for p in pessoas() if p["joga"]]
+
+
+def buscar_jogador(pessoa_id):
+    return next((p for p in jogadores() if p["id"] == pessoa_id), None)
 
 
 _NUMERACAO = re.compile(r"^\s*\d+\s*[.)\-–:]\s*")  # "1. Fulano", "2 - Ciclano", "3) Beltrano"
@@ -118,22 +140,140 @@ def limpar_nomes(texto):
     return nomes
 
 
-def definir_pessoas(nomes):
-    """Salva a lista. Quem já existia mantém o mesmo id (e as avaliações)."""
+def _novo_id(nome, usados):
+    base = slugify(nome) or "pessoa"
+    pid, n = base, 2
+    while pid in usados:
+        pid, n = f"{base}-{n}", n + 1
+    return pid
+
+
+def adicionar_pessoas(nomes, somente_estes=False):
+    """Marca os nomes como jogando esta semana, cadastrando quem ainda não existe.
+
+    Com somente_estes=True, quem não está em `nomes` sai da lista da semana.
+    Devolve (quantos foram cadastrados agora, quantos já existiam).
+    """
+    novos = existentes = 0
     with editar(LOGINS) as dados:
-        ids_existentes = {p["nome"].casefold(): p["id"] for p in dados["pessoas"]}
-        ids = {nome: ids_existentes[nome.casefold()] for nome in nomes if nome.casefold() in ids_existentes}
-        usados = set(ids.values())
+        lista = dados["pessoas"]
+        por_nome = {p["nome"].casefold(): p for p in lista}
+        usados = {p["id"] for p in lista}
+        if somente_estes:
+            for p in lista:
+                p["joga"] = False
         for nome in nomes:
-            if nome not in ids:
-                base = slugify(nome) or "pessoa"
-                pid, n = base, 2
-                while pid in usados:
-                    pid, n = f"{base}-{n}", n + 1
-                ids[nome] = pid
-                usados.add(pid)
-        dados["pessoas"] = [{"id": ids[nome], "nome": nome} for nome in nomes]
-    return dados["pessoas"]
+            pessoa = por_nome.get(nome.casefold())
+            if pessoa:
+                pessoa["joga"] = True
+                existentes += 1
+            else:
+                pessoa = {"id": _novo_id(nome, usados), "nome": nome, "foto": None, "joga": True}
+                usados.add(pessoa["id"])
+                por_nome[nome.casefold()] = pessoa
+                lista.append(pessoa)
+                novos += 1
+        lista.sort(key=lambda p: _ordem_alfabetica(p["nome"]))
+    return novos, existentes
+
+
+def salvar_cadastro(ids_no_formulario, nomes, jogam):
+    """Atualiza nome e "joga" de quem estava no formulário. O id não muda ao renomear.
+
+    Devolve a lista de nomes que não puderam ser usados por já existirem.
+    """
+    repetidos = []
+    with editar(LOGINS) as dados:
+        lista = dados["pessoas"]
+        for p in lista:
+            if p["id"] not in ids_no_formulario:
+                continue
+            p["joga"] = p["id"] in jogam
+            novo = " ".join(nomes.get(p["id"], "").split())
+            if novo and novo != p["nome"]:
+                if any(o is not p and o["nome"].casefold() == novo.casefold() for o in lista):
+                    repetidos.append(novo)
+                else:
+                    p["nome"] = novo
+        lista.sort(key=lambda p: _ordem_alfabetica(p["nome"]))
+    return repetidos
+
+
+def excluir_pessoa(pessoa_id):
+    with editar(LOGINS) as dados:
+        pessoa = next((p for p in dados["pessoas"] if p["id"] == pessoa_id), None)
+        if pessoa:
+            dados["pessoas"].remove(pessoa)
+    if not pessoa:
+        return None
+    # Some também das avaliações, para ninguém novo com o mesmo id herdar as notas.
+    with editar(AVALIACOES) as dados:
+        dados["avaliacoes"].pop(pessoa_id, None)
+        for registro in dados["avaliacoes"].values():
+            for campo in ("notas", "ataque", "defesa"):
+                registro.get(campo, {}).pop(pessoa_id, None)
+            if pessoa_id in registro.get("ranking", []):
+                registro["ranking"].remove(pessoa_id)
+    _apagar_foto(pessoa.get("foto"))
+    return pessoa
+
+
+# ---------- fotos ----------
+
+ARQUIVO_FOTO = re.compile(r"^[a-z0-9_-]+-\d+\.(jpg|png|webp|gif)$")
+
+
+def pasta_fotos():
+    pasta = Path(settings.MEDIA_ROOT) / "fotos"
+    pasta.mkdir(parents=True, exist_ok=True)
+    return pasta
+
+
+def _tipo_imagem(inicio):
+    if inicio.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if inicio.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if inicio[:4] == b"RIFF" and inicio[8:12] == b"WEBP":
+        return "webp"
+    if inicio.startswith(b"GIF8"):
+        return "gif"
+    return None
+
+
+def _apagar_foto(arquivo):
+    if arquivo and ARQUIVO_FOTO.match(arquivo):
+        (pasta_fotos() / arquivo).unlink(missing_ok=True)
+
+
+def salvar_foto(pessoa_id, arquivo_enviado):
+    """Guarda a foto (JPEG, PNG, WebP ou GIF de até 10 MB). Devolve False se não for uma imagem válida."""
+    extensao = _tipo_imagem(arquivo_enviado.read(16))
+    arquivo_enviado.seek(0)
+    if not extensao or arquivo_enviado.size > TAMANHO_MAX_FOTO:
+        return False
+    # nome novo a cada troca, para o navegador não mostrar a foto antiga do cache
+    nome_arquivo = f"{pessoa_id}-{time.time_ns() // 1_000_000}.{extensao}"
+    with open(pasta_fotos() / nome_arquivo, "wb") as destino:
+        for pedaco in arquivo_enviado.chunks():
+            destino.write(pedaco)
+
+    antiga = None
+    with editar(LOGINS) as dados:
+        pessoa = next((p for p in dados["pessoas"] if p["id"] == pessoa_id), None)
+        if pessoa:
+            antiga, pessoa["foto"] = pessoa.get("foto"), nome_arquivo
+    _apagar_foto(antiga if pessoa else nome_arquivo)
+    return bool(pessoa)
+
+
+def remover_foto(pessoa_id):
+    antiga = None
+    with editar(LOGINS) as dados:
+        for p in dados["pessoas"]:
+            if p["id"] == pessoa_id:
+                antiga, p["foto"] = p.get("foto"), None
+    _apagar_foto(antiga)
 
 
 # ---------- avaliacoes.json ----------

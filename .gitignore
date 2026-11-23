@@ -1,4 +1,5 @@
-# Dados do app (logins.json e avaliacoes.json), gerados no servidor
+# Dados do app (logins.json e avaliacoes.json) e fotos dos jogadores, gerados no servidor
 /dados/
+/media/
 
 __pycache__/

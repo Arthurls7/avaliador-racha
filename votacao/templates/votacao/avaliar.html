@@ -1,0 +1,103 @@
+{% extends "votacao/base.html" %}
+{% block titulo %}Avaliar · {{ pessoa.nome }}{% endblock %}
+{% block estilo %}
+  .ola { display: flex; align-items: center; gap: 14px; margin: 14px 0 4px; }
+  .ola h1 { margin: 0; }
+  .ola p { margin: 2px 0 0; }
+  .legenda { display: flex; justify-content: space-between; gap: 8px; margin: 14px 2px 4px;
+             font-size: .85rem; font-weight: 700; color: var(--suave); }
+
+  .nota { padding: 14px; margin: 10px 0; border: 2px solid transparent; transition: border-color .15s; }
+  .nota.feita { border-color: #bfe3cb; }
+  .nota .quem { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 1.05rem; }
+  .nota .quem .nome { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.2; }
+  .nota .quem .ok { flex: none; color: var(--verde); font-size: 1.2rem; visibility: hidden; }
+  .nota.feita .quem .ok { visibility: visible; }
+
+  .escala { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 12px; }
+  .escala label { position: relative; -webkit-tap-highlight-color: transparent; }
+  .escala input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+  .escala span { display: grid; place-items: center; height: 50px; border-radius: 14px; border: 2px solid var(--borda);
+                 background: #fff; font-weight: 800; font-size: 1.2rem; color: var(--texto);
+                 transition: background .1s, border-color .1s, transform .1s; }
+  .escala label:hover span { border-color: var(--verde); }
+  .escala input:checked + span { background: var(--verde); border-color: var(--verde); color: #fff; transform: scale(1.06); }
+  .escala input:focus-visible + span { outline: 3px solid var(--amarelo); outline-offset: 2px; }
+
+  .barra-fixa .linha { display: flex; align-items: center; gap: 12px; }
+  .barra-fixa .botao { flex: 1; }
+  #contador { font-weight: 700; color: var(--suave); white-space: nowrap; }
+{% endblock %}
+{% block conteudo %}
+<a class="voltar" href="{% url 'votacao:inicio' %}">← Não é você?</a>
+<div class="ola">
+  {% include "votacao/_avatar.html" with p=pessoa tamanho="medio" %}
+  <div>
+    <h1>Olá, {{ pessoa.nome }}!</h1>
+    {% if linhas %}<p class="suave">Dê uma nota de 0 a 5 para cada um.</p>{% endif %}
+  </div>
+</div>
+
+{% if not linhas %}
+  <div class="cartao">Ainda não tem mais ninguém na lista desta semana para avaliar.</div>
+{% else %}
+  {% if anterior_data %}
+    <div class="msg info">Você já avaliou em {{ anterior_data }}. Pode mudar as notas e salvar de novo.</div>
+  {% endif %}
+  {% if erro %}<div class="msg error">{{ erro }}</div>{% endif %}
+
+  <div class="legenda" aria-hidden="true"><span>0 = ainda aprendendo</span><span>5 = craque ⭐</span></div>
+
+  <form method="post" id="form-notas">
+    {% csrf_token %}
+    {% for l in linhas %}
+      <div class="cartao nota" data-nota role="radiogroup" aria-label="Nota para {{ l.pessoa.nome }}">
+        <div class="quem">
+          {% include "votacao/_avatar.html" with p=l.pessoa tamanho="medio" %}
+          <span class="nome">{{ l.pessoa.nome }}</span>
+          <b class="ok" aria-hidden="true">✓</b>
+        </div>
+        <div class="escala">
+          {% for valor in opcoes %}
+            <label>
+              <input type="radio" name="nota_{{ l.pessoa.id }}" value="{{ valor }}" required aria-label="{{ valor }}"{% if valor == l.nota %} checked{% endif %}>
+              <span>{{ valor }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+    <div class="barra-fixa">
+      <div class="linha">
+        <span id="contador"></span>
+        <button type="submit" class="botao largo" id="salvar">Salvar notas</button>
+      </div>
+    </div>
+  </form>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const form = document.getElementById("form-notas");
+  if (!form) return;
+  const cartoes = [...form.querySelectorAll("[data-nota]")];
+  const contador = document.getElementById("contador");
+  const salvar = document.getElementById("salvar");
+
+  function atualizar() {
+    let faltam = 0;
+    cartoes.forEach(c => {
+      const feita = !!c.querySelector("input:checked");
+      c.classList.toggle("feita", feita);
+      if (!feita) faltam++;
+    });
+    contador.textContent = faltam ? "Faltam " + faltam : "Tudo pronto!";
+    salvar.disabled = faltam > 0;
+  }
+  form.addEventListener("change", atualizar);
+  atualizar();
+})();
+</script>
+{% endblock %}
