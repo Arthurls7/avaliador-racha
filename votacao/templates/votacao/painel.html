@@ -1,0 +1,65 @@
+{% extends "votacao/base.html" %}
+{% block titulo %}Painel{% endblock %}
+{% block conteudo %}
+<div class="acoes" style="justify-content: space-between">
+  <h1>Painel do administrador</h1>
+  <form method="post" action="{% url 'votacao:painel_sair' %}">
+    {% csrf_token %}<button type="submit" class="botao secundario">Sair</button>
+  </form>
+</div>
+
+<section class="cartao">
+  <h2>Resultado</h2>
+  {% if linhas %}
+    <p class="suave">{{ ja_avaliaram }} de {{ linhas|length }} pessoas já avaliaram. A nota final de cada um é a média das notas que recebeu.</p>
+    <div class="tabela-rolagem">
+      <table>
+        <thead>
+          <tr>
+            <th class="num">#</th><th>Nome</th><th class="num">Nota final</th><th class="num">Avaliações</th>
+            <th class="num">Ataque</th><th class="num">Defesa</th><th>Já avaliou?</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for l in linhas %}
+            <tr>
+              <td class="num">{% if l.nota is not None %}{{ forloop.counter }}º{% endif %}</td>
+              <td>{{ l.nome }}</td>
+              <td class="num"><strong>{{ l.nota_fmt }}</strong></td>
+              <td class="num">{{ l.qtd }}</td>
+              <td class="num">{{ l.ataque_fmt }}</td>
+              <td class="num">{{ l.defesa_fmt }}</td>
+              <td>{% if l.avaliou %}<span class="ok">✓</span> {{ l.avaliou_modo }}<br><span class="suave pequeno">{{ l.avaliou_data }}</span>{% else %}<span class="suave">não</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="suave pequeno">"Ataque" e "Defesa" são as médias só de quem avaliou por ataque e defesa. A nota final junta as duas formas de avaliação.</p>
+  {% else %}
+    <p class="suave">Cadastre a lista de pessoas abaixo.</p>
+  {% endif %}
+</section>
+
+<section class="cartao">
+  <h2>Lista de pessoas</h2>
+  <form method="post" action="{% url 'votacao:painel_pessoas' %}">
+    {% csrf_token %}
+    <textarea name="nomes" rows="12" placeholder="Um nome por linha">{{ texto_nomes }}</textarea>
+    <p class="suave pequeno">
+      Um nome por linha (pode colar a lista do WhatsApp; numeração como "1." ou "2 -" no começo é ignorada).
+      Quem sair da lista deixa de aparecer e de contar no resultado. Corrigir maiúscula/acento mantém as
+      avaliações da pessoa; trocar o nome por outro conta como pessoa nova.
+    </p>
+    <button type="submit" class="botao">Salvar lista</button>
+  </form>
+</section>
+
+<section class="cartao">
+  <h2>Zerar avaliações</h2>
+  <p class="suave">Apaga todas as avaliações para começar uma rodada nova. A lista de pessoas continua igual.</p>
+  <form method="post" action="{% url 'votacao:painel_zerar' %}" onsubmit="return confirm('Apagar TODAS as avaliações? Não dá para desfazer.');">
+    {% csrf_token %}<button type="submit" class="botao perigo">Zerar avaliações</button>
+  </form>
+</section>
+{% endblock %}

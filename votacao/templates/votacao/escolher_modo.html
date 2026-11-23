@@ -1,0 +1,25 @@
+{% extends "votacao/base.html" %}
+{% block titulo %}{{ pessoa.nome }}{% endblock %}
+{% block conteudo %}
+<a class="voltar" href="{% url 'votacao:inicio' %}">← Não é você?</a>
+<h1>Olá, {{ pessoa.nome }}!</h1>
+
+{% if not tem_outros %}
+  <div class="cartao">Ainda não há outras pessoas na lista para avaliar.</div>
+{% else %}
+  {% if anterior %}
+    <div class="msg info">Você já avaliou em {{ anterior_data }} ({{ anterior_modo }}). Se avaliar de novo, a avaliação anterior é substituída.</div>
+  {% endif %}
+  <p class="suave">Como você quer avaliar os outros?</p>
+
+  <a class="cartao opcao" href="{% url 'votacao:ranking' pessoa.id %}">
+    <h2>🏆 Ranking do melhor pro pior</h2>
+    <p>Coloque todo mundo em ordem. O 1º fica com nota 5, o último com 0,5 e os do meio são distribuídos igualmente entre esses valores.</p>
+  </a>
+
+  <a class="cartao opcao" href="{% url 'votacao:notas' pessoa.id %}">
+    <h2>⚔️ Notas de ataque e defesa</h2>
+    <p>Dê uma nota de 0 a 5 de ataque e outra de defesa para cada pessoa. A nota final é a média das duas.</p>
+  </a>
+{% endif %}
+{% endblock %}

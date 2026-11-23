@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "votacao",
 ]
 
 MIDDLEWARE = [
@@ -128,3 +129,9 @@ MEDIA_ROOT = '/home/arthurlps7/Racha/media'
 MEDIA_URL = '/media/'
 STATIC_ROOT = '/home/arthurlps7/Racha/static'
 STATIC_URL = '/static/'
+
+# App de votação: sem banco de dados.
+# Sessões ficam em arquivos temporários e os dados em JSON na pasta dados/
+# (dados/logins.json e dados/avaliacoes.json, criados automaticamente).
+SESSION_ENGINE = "django.contrib.sessions.backends.file"
+VOTACAO_DADOS_DIR = BASE_DIR / "dados"

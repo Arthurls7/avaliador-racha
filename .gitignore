@@ -1,0 +1,4 @@
+# Dados do app (logins.json e avaliacoes.json), gerados no servidor
+/dados/
+
+__pycache__/

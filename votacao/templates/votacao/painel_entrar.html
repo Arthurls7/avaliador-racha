@@ -1,0 +1,19 @@
+{% extends "votacao/base.html" %}
+{% block titulo %}Entrar{% endblock %}
+{% block conteudo %}
+<a class="voltar" href="{% url 'votacao:inicio' %}">← Voltar</a>
+<h1>Área do administrador</h1>
+{% if not configurado %}
+  <div class="msg info">
+    Nenhum administrador configurado ainda. No console do servidor, dentro da pasta do projeto, rode:<br>
+    <code>python manage.py definir_admin SEU_USUARIO</code>
+  </div>
+{% endif %}
+{% if erro %}<div class="msg error">{{ erro }}</div>{% endif %}
+<form method="post" class="cartao">
+  {% csrf_token %}
+  <label>Usuário <input type="text" name="usuario" autocomplete="username" required autofocus></label>
+  <label>Senha <input type="password" name="senha" autocomplete="current-password" required></label>
+  <button type="submit" class="botao">Entrar</button>
+</form>
+{% endblock %}
