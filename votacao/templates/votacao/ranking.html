@@ -1,0 +1,44 @@
+{% extends "votacao/base.html" %}
+{% block titulo %}Ranking{% endblock %}
+{% block estilo %}
+  .ranking .pos { width: 2.6rem; flex: none; text-align: center; font-weight: 800; font-size: 1.05rem; color: var(--suave); }
+  .ranking .pos.medalha { font-size: 1.5rem; }
+  .ranking li:nth-child(-n+3) .nome { font-size: 1.05rem; }
+  .sem-nota { display: flex; flex-wrap: wrap; gap: 8px; }
+  .sem-nota span { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px; border-radius: 999px;
+                   background: var(--fundo); font-weight: 700; }
+{% endblock %}
+{% block menu %}{% include "votacao/_menu_publico.html" with aba="ranking" %}{% endblock %}
+{% block conteudo %}
+<h1>🏆 Ranking</h1>
+<p class="suave">Pela média das notas que a galera deu. {{ ja_avaliaram }} de {{ total }} já avaliaram; quanto mais gente avaliar, mais justo fica.</p>
+
+{% if ranking %}
+  <section class="cartao">
+    <ol class="lista-pessoas ranking">
+      {% for r in ranking %}
+        <li>
+          <span class="pos{% if r.medalha %} medalha{% endif %}">{% if r.medalha %}{{ r.medalha }}{% else %}{{ r.posicao }}º{% endif %}</span>
+          {% include "votacao/_avatar.html" with p=r.pessoa tamanho="medio" %}
+          <span class="nome">{{ r.pessoa.nome }}</span>
+        </li>
+      {% endfor %}
+    </ol>
+  </section>
+{% else %}
+  <div class="cartao vazio">
+    <div class="grande">🏆</div>
+    <h1>Ninguém recebeu nota ainda</h1>
+    <p class="suave">Vá na aba <a href="{% url 'votacao:inicio' %}">Avaliar</a> e dê as suas notas!</p>
+  </div>
+{% endif %}
+
+{% if ranking and sem_nota %}
+  <section class="cartao">
+    <h2>Ainda sem nota</h2>
+    <div class="sem-nota">
+      {% for p in sem_nota %}<span>{% include "votacao/_avatar.html" with p=p tamanho="mini" %}{{ p.nome }}</span>{% endfor %}
+    </div>
+  </section>
+{% endif %}
+{% endblock %}

@@ -1,8 +1,6 @@
 {% extends "votacao/base.html" %}
 {% block titulo %}Painel{% endblock %}
 {% block estilo %}
-  .topo { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-  .topo h1 { margin-bottom: 0; }
   .ok { color: var(--verde); font-weight: 800; }
 
   .resultado { list-style: none; margin: 0; padding: 0; }
@@ -38,17 +36,11 @@
   .mini:hover { border-color: var(--erro); }
   .marcar { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: var(--verde-escuro);
             cursor: pointer; text-decoration: underline; }
-  .opcao-check { display: flex; gap: 8px; align-items: flex-start; font-weight: 500; margin: 10px 0 14px; }
-  .opcao-check input { margin-top: 4px; width: 18px; height: 18px; accent-color: var(--verde); }
 {% endblock %}
+{% block subtitulo %}<small>Organizador</small>{% endblock %}
+{% block menu %}{% include "votacao/_menu_painel.html" with aba="semana" %}{% endblock %}
 {% block conteudo %}
-<div class="topo">
-  <h1>Painel do organizador</h1>
-  <form method="post" action="{% url 'votacao:painel_sair' %}">
-    {% csrf_token %}<button type="submit" class="botao secundario">Sair</button>
-  </form>
-</div>
-
+<h1>📋 Semana</h1>
 <section class="cartao">
   <h2>🏁 Resultado da semana</h2>
   {% if linhas %}

@@ -1,10 +1,12 @@
 """Regras de nota.
 
-- Cada pessoa dá uma nota de 0 a 5 (números inteiros) para cada um dos outros jogadores da semana.
+- Cada pessoa dá uma nota de 0 a 5 (números inteiros) para cada um dos outros jogadores da semana,
+  ou marca "Não conheço" (aí a opinião dela sobre aquele jogador não entra na conta).
 - Resultado de cada jogador: média das notas que ele recebeu.
 """
 
 OPCOES_NOTA = range(6)  # 0, 1, 2, 3, 4, 5
+NAO_CONHECO = "nao-conheco"
 
 
 def ler_nota(texto):
@@ -46,3 +48,8 @@ def resultados(pessoas, avaliacoes):
 
 def formatar(valor):
     return "—" if valor is None else f"{valor:.2f}".replace(".", ",")
+
+
+def formatar_curto(valor):
+    """4.0 -> "4", 2.75 -> "2,75", 3.5 -> "3,5"."""
+    return f"{round(valor, 2):g}".replace(".", ",")

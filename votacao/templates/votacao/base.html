@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#2b9254">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-  <title>{% block titulo %}Racha{% endblock %} · Racha</title>
+  <title>{% block titulo %}Início{% endblock %} · Racha do Doug</title>
   <style>
     :root {
       --verde: #2b9254; --verde-escuro: #1d6e3e; --verde-claro: #e5f5ea; --amarelo: #ffcf4d;
@@ -20,17 +20,38 @@
     body { margin: 0; color: var(--texto); background: var(--fundo); line-height: 1.45;
            font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 
-    /* cabeçalho com listras de gramado */
-    header { color: #fff; padding: 18px 16px 26px; border-radius: 0 0 28px 28px;
-             background: repeating-linear-gradient(90deg, #2f9a5a 0 44px, #2a8d52 44px 88px); }
-    header .dentro { max-width: 760px; margin: 0 auto; display: flex; align-items: center; gap: 10px; }
+    /* cabeçalho com listras de gramado: nome do racha + menu.
+       No computador fica tudo numa linha; no celular o menu desce para a segunda linha, de ponta a ponta. */
+    header { color: #fff; padding: 12px 16px 14px; border-radius: 0 0 24px 24px;
+             background: repeating-linear-gradient(90deg, #2f9a5a 0 44px, #2a8d52 44px 88px);
+             box-shadow: 0 4px 14px rgba(20, 60, 35, .18); }
+    header .dentro { max-width: 760px; margin: 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
     header a { color: #fff; text-decoration: none; }
-    header .marca { font-size: 1.4rem; font-weight: 800; letter-spacing: .2px; }
-    header .bola { font-size: 1.7rem; display: inline-block; animation: quica 2.4s ease-in-out infinite; }
+    .marca { order: 1; margin-right: auto; display: flex; align-items: center; gap: 10px; min-height: 44px; }
+    .marca .nome-racha { font-size: 1.3rem; font-weight: 800; letter-spacing: .2px; line-height: 1.1; }
+    .marca .nome-racha small { display: block; font-size: .7rem; font-weight: 800; letter-spacing: .6px;
+                               text-transform: uppercase; opacity: .85; }
+    .bola { font-size: 1.7rem; display: inline-block; animation: quica 2.4s ease-in-out infinite; }
     @keyframes quica { 0%, 70%, 100% { transform: translateY(0) rotate(0); } 80% { transform: translateY(-6px) rotate(40deg); } }
-    @media (prefers-reduced-motion: reduce) { header .bola { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .bola { animation: none; } }
 
-    main { max-width: 760px; margin: -12px auto 0; padding: 0 16px 56px; }
+    .menu { order: 2; display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: rgba(0, 40, 20, .22); }
+    .menu a { padding: 8px 14px; border-radius: 999px; text-align: center; font-weight: 700; font-size: .92rem;
+              white-space: nowrap; transition: background .15s; -webkit-tap-highlight-color: transparent; }
+    .menu a:hover { background: rgba(255, 255, 255, .14); }
+    .menu a.ativa { background: #fff; color: var(--verde-escuro); box-shadow: 0 1px 4px rgba(0, 0, 0, .15); }
+    .acoes-topo { order: 3; margin: 0; }
+    .botao-topo { display: grid; place-items: center; min-width: 40px; height: 40px; padding: 0 14px; border: 0;
+                  border-radius: 999px; background: rgba(0, 40, 20, .22); color: #fff; font: inherit; font-weight: 700;
+                  cursor: pointer; }
+    .botao-topo:hover { background: rgba(255, 255, 255, .2); }
+    a.botao-topo { padding: 0; width: 40px; }
+    @media (max-width: 640px) {
+      .menu { order: 4; flex: 1 1 100%; }
+      .menu a { flex: 1; padding: 9px 4px; }
+    }
+
+    main { max-width: 760px; margin: 0 auto; padding: 4px 16px 56px; }
     h1 { font-size: 1.55rem; margin: 18px 0 4px; line-height: 1.2; }
     h2 { font-size: 1.12rem; margin: 0 0 10px; }
     a { color: var(--verde-escuro); }
@@ -84,16 +105,31 @@
     th { font-size: .8rem; color: var(--suave); font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
     .num { text-align: right; white-space: nowrap; }
     code { background: #eef2ee; padding: 2px 6px; border-radius: 6px; }
-    footer { margin-top: 36px; text-align: center; font-size: .9rem; }
-    footer a { color: var(--suave); }
     .escondido { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .opcao-check { display: flex; gap: 8px; align-items: flex-start; font-weight: 500; margin: 10px 0 14px; }
+    .opcao-check input { margin-top: 4px; width: 18px; height: 18px; accent-color: var(--verde); }
+    .lista-pessoas { list-style: none; margin: 0; padding: 0; }
+    .lista-pessoas li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--borda); }
+    .lista-pessoas li:last-child { border-bottom: 0; }
+    .lista-pessoas .nome { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2;
+                           overflow-wrap: break-word; font-weight: 700; }
+    .lista-pessoas .nome small { font-weight: 600; color: var(--suave); }
+    .faixa-linha { border-top: 6px solid var(--cor); }
+    .faixa-linha h2 { display: flex; align-items: center; gap: 8px; }
+    .faixa-linha h2::before { content: ""; width: 14px; height: 14px; border-radius: 50%; background: var(--cor); flex: none; }
+    .vazio { text-align: center; padding: 32px 16px; }
+    .vazio .grande { font-size: 3rem; }
     {% block estilo %}{% endblock %}
   </style>
 </head>
 <body>
   <header>
     <div class="dentro">
-      <a href="{% url 'votacao:inicio' %}"><span class="bola" aria-hidden="true">⚽</span> <span class="marca">Racha</span></a>
+      <a class="marca" href="{% url 'votacao:inicio' %}">
+        <span class="bola" aria-hidden="true">⚽</span>
+        <span class="nome-racha">Racha do Doug{% block subtitulo %}{% endblock %}</span>
+      </a>
+      {% block menu %}{% include "votacao/_menu_publico.html" %}{% endblock %}
     </div>
   </header>
   <main>

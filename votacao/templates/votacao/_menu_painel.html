@@ -1,0 +1,8 @@
+<nav class="menu" aria-label="Menu do organizador">
+  <a href="{% url 'votacao:painel' %}" class="{% if aba == 'semana' %}ativa{% endif %}"{% if aba == 'semana' %} aria-current="page"{% endif %}>📋 Semana</a>
+  <a href="{% url 'votacao:painel_linhas' %}" class="{% if aba == 'linhas' %}ativa{% endif %}"{% if aba == 'linhas' %} aria-current="page"{% endif %}>👥 Linhas</a>
+  <a href="{% url 'votacao:inicio' %}">👀 Ver site</a>
+</nav>
+<form method="post" action="{% url 'votacao:painel_sair' %}" class="acoes-topo">
+  {% csrf_token %}<button type="submit" class="botao-topo">Sair</button>
+</form>

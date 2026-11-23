@@ -1,0 +1,101 @@
+{% extends "votacao/base.html" %}
+{% block titulo %}Linhas · Painel{% endblock %}
+{% block estilo %}
+  .tamanho { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+  .tamanho input { width: 5.5em; padding: 10px 12px; font: inherit; font-weight: 800; text-align: center;
+                   border: 2px solid var(--borda); border-radius: 12px; }
+  .status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+  .status form { margin: 0; }
+  .cabeca { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .cabeca h2 { margin-bottom: 6px; }
+  .lista-pessoas select { flex: none; padding: 8px 6px; font-weight: 700; max-width: 8.5em; }
+  .fora { border-top: 6px dashed var(--borda); }
+  section[id] { scroll-margin-top: 12px; }
+{% endblock %}
+{% block subtitulo %}<small>Organizador</small>{% endblock %}
+{% block menu %}{% include "votacao/_menu_painel.html" with aba="linhas" %}{% endblock %}
+{% block conteudo %}
+<h1>👥 Linhas</h1>
+<section class="cartao">
+  <h2>🎲 Sortear linhas</h2>
+  {% if total %}
+    <form method="post" action="{% url 'votacao:painel_linhas_sortear' %}">
+      {% csrf_token %}
+      <p class="suave">{{ total }} jogador{{ total|pluralize:"es" }} na lista desta semana.</p>
+      <label class="tamanho">Jogadores por linha
+        <input type="number" name="por_linha" value="{{ por_linha }}" min="1" max="50" inputmode="numeric" required>
+      </label>
+      <label class="opcao-check">
+        <input type="checkbox" name="equilibrar"{% if equilibrar %} checked{% endif %}>
+        <span>Equilibrar pelas notas (as linhas ficam com médias parecidas; desmarcado = sorteio puro)</span>
+      </label>
+      <button type="submit" class="botao largo"{% if blocos %} data-confirmar="Sortear de novo? As linhas atuais serão substituídas."{% endif %}>
+        🎲 {% if blocos %}Sortear de novo{% else %}Sortear{% endif %}
+      </button>
+    </form>
+  {% else %}
+    <p class="suave">Ninguém na lista desta semana ainda. Monte a lista na aba <a href="{% url 'votacao:painel' %}">Semana</a>.</p>
+  {% endif %}
+</section>
+
+{% if blocos %}
+  {% if publicado %}
+    <div class="msg success">✅ Publicado em {{ data }}. A galera já vê na aba Linhas da página inicial; ajustes aparecem na hora.</div>
+  {% else %}
+    <div class="msg info status">
+      <span>🙈 Ainda não publicado: só você está vendo.</span>
+      <form method="post" action="{% url 'votacao:painel_linhas_publicar' %}">
+        {% csrf_token %}<button type="submit" class="botao">📣 Publicar linhas</button>
+      </form>
+    </div>
+  {% endif %}
+
+  <p class="suave pequeno">Para ajustar, troque a linha de alguém no seletor ao lado do nome (salva na hora).
+    {% if media_geral %}Quem ainda não tem nota conta como {{ media_geral }} (a média geral) no equilíbrio.{% endif %}</p>
+
+  <form method="post" action="{% url 'votacao:painel_linhas_ajustar' %}" id="form-linhas">
+    {% csrf_token %}
+    {% for b in blocos %}
+      <section class="cartao faixa-linha" id="linha-{{ b.numero }}" style="--cor: {{ b.cor }}">
+        <div class="cabeca">
+          <h2>Linha {{ b.numero }}</h2>
+          <span class="suave pequeno">{{ b.jogadores|length }} jogador{{ b.jogadores|length|pluralize:"es" }} · média <strong>{{ b.media_fmt }}</strong></span>
+        </div>
+        <ul class="lista-pessoas">
+          {% for p in b.jogadores %}
+            <li>
+              {% include "votacao/_avatar.html" with p=p tamanho="pequeno" %}
+              <span class="nome">{{ p.nome }}<small>{{ p.nota_fmt }}</small></span>
+              {% include "votacao/_seletor_linha.html" with atual=b.numero %}
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endfor %}
+
+    {% if fora %}
+      <section class="cartao fora" id="fora">
+        <h2>🪑 Fora das linhas ({{ fora|length }})</h2>
+        <p class="suave pequeno">Entrou na lista depois do sorteio ou foi tirado das linhas. Escolha uma linha para encaixar.</p>
+        <ul class="lista-pessoas">
+          {% for p in fora %}
+            <li>
+              {% include "votacao/_avatar.html" with p=p tamanho="pequeno" %}
+              <span class="nome">{{ p.nome }}<small>{{ p.nota_fmt }}</small></span>
+              {% include "votacao/_seletor_linha.html" with atual=0 %}
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+    <noscript><button type="submit" class="botao">Salvar ajustes</button></noscript>
+  </form>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // trocar a linha de alguém salva na hora
+  document.querySelectorAll("#form-linhas select").forEach(s => s.addEventListener("change", () => s.form.submit()));
+</script>
+{% endblock %}

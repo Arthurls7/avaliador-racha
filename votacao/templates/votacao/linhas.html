@@ -1,0 +1,32 @@
+{% extends "votacao/base.html" %}
+{% block titulo %}Linhas{% endblock %}
+{% block estilo %}
+  .linhas { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0 14px; }
+  .linhas h2 { margin-bottom: 6px; }
+  .linhas .quantos { margin-left: auto; font-size: .8rem; font-weight: 700; color: var(--suave); }
+{% endblock %}
+{% block menu %}{% include "votacao/_menu_publico.html" with aba="linhas" %}{% endblock %}
+{% block conteudo %}
+{% if linhas %}
+  <h1>👥 Linhas</h1>
+  <p class="suave">Sorteadas em {{ data }}. Bom jogo! ⚽</p>
+  <div class="linhas">
+    {% for linha in linhas %}
+      <section class="cartao faixa-linha" style="--cor: {{ linha.cor }}">
+        <h2>Linha {{ linha.numero }} <span class="quantos">{{ linha.jogadores|length }} jogador{{ linha.jogadores|length|pluralize:"es" }}</span></h2>
+        <ul class="lista-pessoas">
+          {% for p in linha.jogadores %}
+            <li>{% include "votacao/_avatar.html" with p=p tamanho="pequeno" %}<span class="nome">{{ p.nome }}</span></li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="cartao vazio">
+    <div class="grande">🎲</div>
+    <h1>As linhas ainda não foram sorteadas</h1>
+    <p class="suave">Assim que o organizador sortear, as linhas aparecem aqui.</p>
+  </div>
+{% endif %}
+{% endblock %}

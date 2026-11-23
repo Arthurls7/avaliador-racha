@@ -1,0 +1,5 @@
+<select name="linha_{{ p.id }}" aria-label="Linha de {{ p.nome }}">
+  {% for n in numeros %}<option value="{{ n }}"{% if n == atual %} selected{% endif %}>Linha {{ n }}</option>{% endfor %}
+  <option value="{{ nova_linha }}">Nova linha</option>
+  <option value="0"{% if atual == 0 %} selected{% endif %}>Fora</option>
+</select>

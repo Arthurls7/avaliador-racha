@@ -12,9 +12,8 @@
   .jogador .selo { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%;
                    display: grid; place-items: center; background: var(--verde); color: #fff; font-size: .8rem;
                    font-weight: 800; box-shadow: 0 0 0 2px #fff; }
-  .vazio { text-align: center; padding: 32px 16px; }
-  .vazio .grande { font-size: 3rem; }
 {% endblock %}
+{% block menu %}{% include "votacao/_menu_publico.html" with aba="avaliar" %}{% endblock %}
 {% block conteudo %}
 {% if pessoas %}
   <h1>Quem é você? 👋</h1>
@@ -36,5 +35,4 @@
     <p class="suave">Assim que o organizador montar a lista, os nomes aparecem aqui.</p>
   </div>
 {% endif %}
-<footer><a href="{% url 'votacao:painel' %}">Área do organizador</a></footer>
 {% endblock %}

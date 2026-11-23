@@ -7,7 +7,12 @@ dados/logins.json
     "pessoas" é o cadastro de todo mundo que já jogou; "joga" marca quem está na lista da semana.
 
 dados/avaliacoes.json
-    {"avaliacoes": {"<id de quem avaliou>": {...registro...}, ...}}
+    {"avaliacoes": {"<id de quem avaliou>": {"notas": {"<id>": 4, ...}, "nao_conhece": ["<id>", ...],
+                                             "data": "..."}, ...}}
+
+dados/linhas.json
+    {"linhas": [["<id>", ...], ...], "publicado": false, "data": "...", "por_linha": 5, "equilibrar": true}
+    As linhas (times) sorteadas; só aparecem na página inicial depois de publicadas.
 
 As fotos ficam em MEDIA_ROOT/fotos/.
 """
@@ -36,12 +41,14 @@ except ImportError:
 
 LOGINS = "logins.json"
 AVALIACOES = "avaliacoes.json"
+LINHAS = "linhas.json"
 FUSO = ZoneInfo("America/Maceio")
 TAMANHO_MAX_FOTO = 10 * 1024 * 1024
 
 _PADRAO = {
     LOGINS: {"admin": None, "pessoas": []},
     AVALIACOES: {"avaliacoes": {}},
+    LINHAS: {"linhas": [], "publicado": False, "data": None, "por_linha": 5, "equilibrar": True},
 }
 _trava_thread = threading.Lock()
 
@@ -88,7 +95,7 @@ def agora():
     return datetime.now(FUSO).isoformat(timespec="seconds")
 
 
-def _ordem_alfabetica(nome):
+def ordem_alfabetica(nome):
     sem_acento = unicodedata.normalize("NFKD", nome).encode("ascii", "ignore").decode()
     return sem_acento.casefold()
 
@@ -173,7 +180,7 @@ def adicionar_pessoas(nomes, somente_estes=False):
                 por_nome[nome.casefold()] = pessoa
                 lista.append(pessoa)
                 novos += 1
-        lista.sort(key=lambda p: _ordem_alfabetica(p["nome"]))
+        lista.sort(key=lambda p: ordem_alfabetica(p["nome"]))
     return novos, existentes
 
 
@@ -195,7 +202,7 @@ def salvar_cadastro(ids_no_formulario, nomes, jogam):
                     repetidos.append(novo)
                 else:
                     p["nome"] = novo
-        lista.sort(key=lambda p: _ordem_alfabetica(p["nome"]))
+        lista.sort(key=lambda p: ordem_alfabetica(p["nome"]))
     return repetidos
 
 
@@ -210,10 +217,13 @@ def excluir_pessoa(pessoa_id):
     with editar(AVALIACOES) as dados:
         dados["avaliacoes"].pop(pessoa_id, None)
         for registro in dados["avaliacoes"].values():
-            for campo in ("notas", "ataque", "defesa"):
+            for campo in ("notas", "ataque", "defesa"):  # ataque/defesa: avaliações da versão antiga
                 registro.get(campo, {}).pop(pessoa_id, None)
-            if pessoa_id in registro.get("ranking", []):
-                registro["ranking"].remove(pessoa_id)
+            for campo in ("nao_conhece", "ranking"):
+                if pessoa_id in registro.get(campo, []):
+                    registro[campo].remove(pessoa_id)
+    with editar(LINHAS) as dados:
+        dados["linhas"] = [[j for j in linha if j != pessoa_id] for linha in dados["linhas"]]
     _apagar_foto(pessoa.get("foto"))
     return pessoa
 
@@ -290,3 +300,28 @@ def salvar_avaliacao(avaliador_id, registro):
 def zerar_avaliacoes():
     with editar(AVALIACOES) as dados:
         dados["avaliacoes"] = {}
+
+
+# ---------- linhas.json ----------
+
+def linhas():
+    return {**_PADRAO[LINHAS], **ler(LINHAS)}
+
+
+def salvar_sorteio(novas_linhas, por_linha, equilibrar):
+    """Sorteio novo: fica escondido da galera até ser publicado."""
+    with editar(LINHAS) as dados:
+        dados.update(linhas=novas_linhas, publicado=False, data=agora(), por_linha=por_linha, equilibrar=equilibrar)
+
+
+def ajustar_linhas(novas_linhas):
+    """Ajuste manual: se já estava publicado, continua publicado (e a galera já vê o ajuste)."""
+    with editar(LINHAS) as dados:
+        dados["linhas"] = [linha for linha in novas_linhas if linha]
+        dados["data"] = agora()
+
+
+def publicar_linhas():
+    with editar(LINHAS) as dados:
+        dados["publicado"] = True
+        dados["data"] = agora()

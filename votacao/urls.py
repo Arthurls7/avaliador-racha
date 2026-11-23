@@ -6,6 +6,8 @@ app_name = "votacao"
 
 urlpatterns = [
     path("", views.inicio, name="inicio"),
+    path("linhas/", views.ver_linhas, name="linhas"),
+    path("ranking/", views.ver_ranking, name="ranking"),
     path("avaliar/<slug:pessoa_id>/", views.avaliar, name="avaliar"),
     path("media/fotos/<str:arquivo>", views.foto, name="foto"),
     path("painel/", views.painel, name="painel"),
@@ -16,4 +18,8 @@ urlpatterns = [
     path("painel/remover-foto/", views.painel_remover_foto, name="painel_remover_foto"),
     path("painel/excluir/", views.painel_excluir, name="painel_excluir"),
     path("painel/zerar/", views.painel_zerar, name="painel_zerar"),
+    path("painel/linhas/", views.painel_linhas, name="painel_linhas"),
+    path("painel/linhas/sortear/", views.painel_linhas_sortear, name="painel_linhas_sortear"),
+    path("painel/linhas/ajustar/", views.painel_linhas_ajustar, name="painel_linhas_ajustar"),
+    path("painel/linhas/publicar/", views.painel_linhas_publicar, name="painel_linhas_publicar"),
 ]
