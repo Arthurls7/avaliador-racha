@@ -3,4 +3,6 @@
   <a href="{% url 'votacao:linhas' %}" class="{% if aba == 'linhas' %}ativa{% endif %}"{% if aba == 'linhas' %} aria-current="page"{% endif %}>👥 Linhas</a>
   <a href="{% url 'votacao:ranking' %}" class="{% if aba == 'ranking' %}ativa{% endif %}"{% if aba == 'ranking' %} aria-current="page"{% endif %}>🏆 Ranking</a>
 </nav>
-<a class="acoes-topo botao-topo" href="{% url 'votacao:painel' %}" title="Área do organizador" aria-label="Área do organizador">🔒</a>
+<div class="acoes-topo">
+  <a class="botao-topo" href="{% url 'votacao:painel' %}" title="Área do organizador" aria-label="Área do organizador">🔒</a>
+</div>

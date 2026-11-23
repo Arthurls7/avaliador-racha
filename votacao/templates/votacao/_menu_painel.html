@@ -1,8 +1,11 @@
 <nav class="menu" aria-label="Menu do organizador">
   <a href="{% url 'votacao:painel' %}" class="{% if aba == 'semana' %}ativa{% endif %}"{% if aba == 'semana' %} aria-current="page"{% endif %}>📋 Semana</a>
   <a href="{% url 'votacao:painel_linhas' %}" class="{% if aba == 'linhas' %}ativa{% endif %}"{% if aba == 'linhas' %} aria-current="page"{% endif %}>👥 Linhas</a>
-  <a href="{% url 'votacao:inicio' %}">👀 Ver site</a>
+  <a href="{% url 'votacao:painel_cadastro' %}" class="{% if aba == 'cadastro' %}ativa{% endif %}"{% if aba == 'cadastro' %} aria-current="page"{% endif %}>🗂️ Cadastro</a>
 </nav>
-<form method="post" action="{% url 'votacao:painel_sair' %}" class="acoes-topo">
-  {% csrf_token %}<button type="submit" class="botao-topo">Sair</button>
-</form>
+<div class="acoes-topo">
+  <a class="botao-topo" href="{% url 'votacao:inicio' %}" title="Ver o site" aria-label="Ver o site">👀</a>
+  <form method="post" action="{% url 'votacao:painel_sair' %}">
+    {% csrf_token %}<button type="submit" class="botao-topo">Sair</button>
+  </form>
+</div>

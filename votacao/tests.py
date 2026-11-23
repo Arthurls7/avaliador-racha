@@ -244,11 +244,11 @@ class FluxoTest(SimpleTestCase):
         self.assertContains(self.client.get(reverse("votacao:avaliar", args=["ana"])),
                             f'href="{reverse("votacao:inicio")}" class="ativa" aria-current="page"')
         self.entrar()
-        for nome in ["painel", "painel_linhas"]:
+        for nome in ["painel", "painel_linhas", "painel_cadastro"]:
             resposta = self.client.get(reverse(f"votacao:{nome}"))
             self.assertContains(resposta, "Racha do Doug<small>Organizador</small>")
             self.assertContains(resposta, f'href="{reverse(f"votacao:{nome}")}" class="ativa" aria-current="page"')
-            self.assertContains(resposta, "👀 Ver site")
+            self.assertContains(resposta, 'aria-label="Ver o site"')
             self.assertContains(resposta, f'action="{reverse("votacao:painel_sair")}"')
 
     def test_ranking_publico_sem_media(self):
@@ -289,6 +289,18 @@ class FluxoTest(SimpleTestCase):
         for texto in ["Linha 1", "Linha 2", "Ana", "Bruno", "Caio", "Davi"]:
             self.assertContains(pagina, texto)
 
+        # despublicar esconde de novo, sem perder o sorteio
+        antes = arm.linhas()["linhas"]
+        self.assertContains(self.client.get(painel), "Despublicar")
+        resposta = self.client.post(reverse("votacao:painel_linhas_despublicar"), follow=True)
+        self.assertRedirects(resposta, painel)
+        self.assertContains(resposta, "Linhas escondidas")
+        self.assertContains(resposta, "Publicar linhas")
+        self.assertEqual((arm.linhas()["publicado"], arm.linhas()["linhas"]), (False, antes))
+        self.assertContains(self.client.get(publica), "ainda não foram sorteadas")
+        self.client.post(reverse("votacao:painel_linhas_publicar"))
+        self.assertContains(self.client.get(publica), "Linha 2")
+
         # ajuste manual: muda alguém de linha (continua publicado)
         quem = arm.linhas()["linhas"][0][0]
         resposta = self.client.post(ajustar, {f"linha_{quem}": "2"})
@@ -322,11 +334,16 @@ class FluxoTest(SimpleTestCase):
     def test_painel_exige_login(self):
         self.assertRedirects(self.client.get(reverse("votacao:painel")), reverse("votacao:painel_entrar"))
         self.assertRedirects(self.client.get(reverse("votacao:painel_linhas")), reverse("votacao:painel_entrar"))
-        for nome in ["painel_adicionar", "painel_cadastro", "painel_excluir", "painel_zerar", "painel_remover_foto",
-                     "painel_linhas_sortear", "painel_linhas_publicar", "painel_linhas_ajustar"]:
-            self.client.post(reverse(f"votacao:{nome}"), {"nomes": "Hacker", "id": "ana", "ids": ["ana"]})
+        self.assertRedirects(self.client.get(reverse("votacao:painel_cadastro")), reverse("votacao:painel_entrar"))
+        arm.salvar_sorteio([["ana", "bruno"]], 2, True)
+        arm.publicar_linhas()
+        for nome in ["painel_adicionar", "painel_cadastro_salvar", "painel_excluir", "painel_zerar", "painel_remover_foto",
+                     "painel_linhas_sortear", "painel_linhas_publicar", "painel_linhas_despublicar",
+                     "painel_linhas_ajustar"]:
+            resposta = self.client.post(reverse(f"votacao:{nome}"), {"nomes": "Hacker", "id": "ana", "ids": ["ana"]})
+            self.assertRedirects(resposta, reverse("votacao:painel_entrar"))
         self.assertEqual(len(arm.jogadores()), 4)
-        self.assertEqual(arm.linhas()["linhas"], [])
+        self.assertEqual((arm.linhas()["linhas"], arm.linhas()["publicado"]), ([["ana", "bruno"]], True))
         resposta = self.client.post(reverse("votacao:painel_entrar"), {"usuario": "chefe", "senha": "errada"})
         self.assertContains(resposta, "Usuário ou senha incorretos.")
 
@@ -336,14 +353,23 @@ class FluxoTest(SimpleTestCase):
         resposta = self.client.get(reverse("votacao:painel"))
         self.assertContains(resposta, "1 de 4 pessoas já avaliaram")
         self.assertContains(resposta, "<strong>5,00</strong>", html=True)
+        # cadastro e zerar ficam na aba Cadastro, não na Semana
+        self.assertContains(resposta, "Quem joga esta semana")
+        self.assertNotContains(resposta, "form-cadastro")
+        self.assertNotContains(resposta, "Zerar avaliações")
+        cadastro = self.client.get(reverse("votacao:painel_cadastro"))
+        self.assertContains(cadastro, 'id="form-cadastro"')
+        self.assertContains(cadastro, "1 guardada agora")
+        self.assertContains(cadastro, "Zerar avaliações</button>")
 
         self.client.post(reverse("votacao:painel_adicionar"), {"nomes": "Ana\nEva", "somente_estes": "on"})
         self.assertEqual([p["nome"] for p in arm.jogadores()], ["Ana", "Eva"])
 
-        self.client.post(reverse("votacao:painel_zerar"))
+        self.assertRedirects(self.client.post(reverse("votacao:painel_zerar")), reverse("votacao:painel_cadastro"))
         self.assertEqual(arm.avaliacoes(), {})
 
-        self.client.post(reverse("votacao:painel_excluir"), {"id": "eva"})
+        self.assertRedirects(self.client.post(reverse("votacao:painel_excluir"), {"id": "eva"}),
+                             reverse("votacao:painel_cadastro"))
         self.assertNotIn("Eva", self.joga())
 
         self.client.post(reverse("votacao:painel_sair"))
@@ -351,14 +377,14 @@ class FluxoTest(SimpleTestCase):
 
     def test_painel_salvar_cadastro_com_foto(self):
         self.entrar()
-        resposta = self.client.post(reverse("votacao:painel_cadastro"), {
+        resposta = self.client.post(reverse("votacao:painel_cadastro_salvar"), {
             "ids": ["ana", "bruno", "caio", "davi"],
             "nome_ana": "Ana", "nome_bruno": "Bruninho", "nome_caio": "Caio", "nome_davi": "Davi",
             "joga": ["ana", "bruno"],
             "foto_ana": SimpleUploadedFile("ana.jpg", JPEG),
             "foto_caio": SimpleUploadedFile("caio.heic", b"nao-e-imagem"),
         }, follow=True)
-        self.assertRedirects(resposta, reverse("votacao:painel"))
+        self.assertRedirects(resposta, reverse("votacao:painel_cadastro"))
         self.assertContains(resposta, "Não deu para usar estas fotos")
         self.assertEqual(self.joga(), {"Ana": True, "Bruninho": True, "Caio": False, "Davi": False})
         self.assertIsNotNone(arm.buscar_jogador("ana")["foto"])

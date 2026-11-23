@@ -1,5 +1,5 @@
 {% extends "votacao/base.html" %}
-{% block titulo %}Painel{% endblock %}
+{% block titulo %}Semana · Painel{% endblock %}
 {% block estilo %}
   .ok { color: var(--verde); font-weight: 800; }
 
@@ -11,31 +11,6 @@
   .resultado .nota-final { flex: none; display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
   .resultado .nota-final strong { font-size: 1.25rem; color: var(--verde-escuro); }
   .resultado .nota-final small { font-size: .75rem; color: var(--suave); }
-
-  .cadastro { list-style: none; margin: 0; padding: 0; }
-  .cadastro li { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--borda); }
-  .cadastro li:last-child { border-bottom: 0; }
-  .cadastro li.fora { opacity: .55; }
-  .cadastro input[type=text] { flex: 1; min-width: 0; padding: 8px 10px; }
-  .trocar-foto { position: relative; cursor: pointer; flex: none; }
-  .trocar-foto .camera { position: absolute; right: -4px; bottom: -4px; width: 22px; height: 22px; border-radius: 50%;
-                         display: grid; place-items: center; background: #fff; font-size: .72rem;
-                         box-shadow: 0 1px 4px rgba(0, 0, 0, .25); }
-  .trocar-foto:focus-within .avatar { outline: 3px solid var(--verde); outline-offset: 2px; }
-  /* foto escolhida mas ainda não salva: anel verde */
-  .alterado .trocar-foto .avatar { box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--verde); }
-  .alterado .trocar-foto .camera { background: var(--verde); }
-  .joga { position: relative; flex: none; cursor: pointer; }
-  .joga input { position: absolute; opacity: 0; }
-  .joga span { display: inline-block; padding: 7px 12px; border-radius: 999px; font-size: .85rem; font-weight: 700;
-               background: var(--fundo); color: var(--suave); border: 2px solid var(--borda); white-space: nowrap; }
-  .joga input:checked + span { background: var(--verde); border-color: var(--verde); color: #fff; }
-  .joga input:focus-visible + span { outline: 3px solid var(--amarelo); }
-  .mini { width: 36px; height: 36px; flex: none; border: 2px solid var(--borda); border-radius: 12px; background: #fff;
-          font: inherit; cursor: pointer; }
-  .mini:hover { border-color: var(--erro); }
-  .marcar { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: var(--verde-escuro);
-            cursor: pointer; text-decoration: underline; }
 {% endblock %}
 {% block subtitulo %}<small>Organizador</small>{% endblock %}
 {% block menu %}{% include "votacao/_menu_painel.html" with aba="semana" %}{% endblock %}
@@ -73,127 +48,9 @@
       <span>Esta é a lista completa da semana (quem não estiver aqui fica de fora desta vez)</span>
     </label>
     <p class="suave pequeno">Quem já está no cadastro só é marcado como "joga"; quem é novo é cadastrado na hora.
-      Numeração como "1." ou "2 -" no começo da linha é ignorada.</p>
+      Numeração como "1." ou "2 -" no começo da linha é ignorada. Fotos, nomes e quem joga também dá para
+      ajustar na aba <a href="{% url 'votacao:painel_cadastro' %}">Cadastro</a>.</p>
     <button type="submit" class="botao">Atualizar lista</button>
   </form>
 </section>
-
-<section class="cartao">
-  <h2>👥 Cadastro ({{ cadastro|length }})</h2>
-  {% if cadastro %}
-    <p class="suave pequeno">Toque na foto para trocar (fica com anel verde até você salvar). Marque quem
-      <strong>joga</strong> esta semana. Renomear não perde as avaliações.
-      <button type="button" class="marcar" data-marcar="1">Marcar todos</button> ·
-      <button type="button" class="marcar" data-marcar="0">Desmarcar todos</button></p>
-    <form method="post" action="{% url 'votacao:painel_cadastro' %}" enctype="multipart/form-data" id="form-cadastro">
-      {% csrf_token %}
-      <ul class="cadastro">
-        {% for p in cadastro %}
-          <li class="{% if not p.joga %}fora{% endif %}">
-            <input type="hidden" name="ids" value="{{ p.id }}">
-            <label class="trocar-foto" title="Trocar a foto de {{ p.nome }}">
-              {% include "votacao/_avatar.html" with p=p tamanho="medio" %}
-              <span class="camera" aria-hidden="true">📷</span>
-              <input type="file" name="foto_{{ p.id }}" accept="image/*" class="escondido" data-foto aria-label="Foto de {{ p.nome }}">
-            </label>
-            <input type="text" name="nome_{{ p.id }}" value="{{ p.nome }}" required aria-label="Nome">
-            <label class="joga"><input type="checkbox" name="joga" value="{{ p.id }}"{% if p.joga %} checked{% endif %}><span>Joga</span></label>
-            {% if p.foto %}
-              <button type="submit" form="form-remover-foto" name="id" value="{{ p.id }}" class="mini"
-                      title="Remover foto" aria-label="Remover foto de {{ p.nome }}" data-confirmar="Remover a foto de {{ p.nome }}?">🚫</button>
-            {% endif %}
-            <button type="submit" form="form-excluir" name="id" value="{{ p.id }}" class="mini"
-                    title="Excluir do cadastro" aria-label="Excluir {{ p.nome }}"
-                    data-confirmar="Excluir {{ p.nome }} do cadastro? As avaliações dessa pessoa também somem.">🗑️</button>
-          </li>
-        {% endfor %}
-      </ul>
-      <div class="barra-fixa">
-        <button type="submit" class="botao largo" id="salvar-cadastro">Salvar cadastro</button>
-      </div>
-    </form>
-    <form method="post" action="{% url 'votacao:painel_remover_foto' %}" id="form-remover-foto">{% csrf_token %}</form>
-    <form method="post" action="{% url 'votacao:painel_excluir' %}" id="form-excluir">{% csrf_token %}</form>
-  {% else %}
-    <p class="suave">Ninguém cadastrado ainda. Use a caixa acima para adicionar a galera.</p>
-  {% endif %}
-</section>
-
-<section class="cartao">
-  <h2>🧹 Zerar avaliações</h2>
-  <p class="suave">Apaga todas as avaliações para começar uma rodada nova. O cadastro e as fotos continuam.</p>
-  <form method="post" action="{% url 'votacao:painel_zerar' %}">
-    {% csrf_token %}
-    <button type="submit" class="botao perigo" data-confirmar="Apagar TODAS as avaliações? Não dá para desfazer.">Zerar avaliações</button>
-  </form>
-</section>
-{% endblock %}
-
-{% block scripts %}
-<script>
-(function () {
-  const form = document.getElementById("form-cadastro");
-  if (!form) return;
-  const salvar = document.getElementById("salvar-cadastro");
-
-  // marcar/desmarcar todos e deixar apagado quem não joga
-  const checks = [...form.querySelectorAll("input[name=joga]")];
-  const pintar = c => c.closest("li").classList.toggle("fora", !c.checked);
-  checks.forEach(c => c.addEventListener("change", () => pintar(c)));
-  document.querySelectorAll("[data-marcar]").forEach(b => b.addEventListener("click", () => {
-    checks.forEach(c => { c.checked = b.dataset.marcar === "1"; pintar(c); });
-  }));
-
-  // Antes de enviar, o próprio navegador corta a foto em quadrado e reduz para 320x320 (uns 30 KB).
-  const LADO = 320;
-  function carregar(arquivo) {
-    return new Promise((ok, erro) => {
-      const img = new Image();
-      img.onload = () => ok(img);
-      img.onerror = erro;
-      img.src = URL.createObjectURL(arquivo);
-    });
-  }
-  async function reduzir(arquivo) {
-    const img = await carregar(arquivo);
-    const w = img.naturalWidth, h = img.naturalHeight, lado = Math.min(w, h);
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = LADO;
-    // corte quadrado no meio; em foto "em pé" puxa um pouco pra cima, onde costuma estar o rosto
-    canvas.getContext("2d").drawImage(img, (w - lado) / 2, (h - lado) * 0.3, lado, lado, 0, 0, LADO, LADO);
-    URL.revokeObjectURL(img.src);
-    const blob = await new Promise(ok => canvas.toBlob(ok, "image/jpeg", 0.85));
-    if (!blob) throw new Error("não deu para converter");
-    return new File([blob], "foto.jpg", { type: "image/jpeg" });
-  }
-
-  let processando = 0;
-  form.querySelectorAll("input[data-foto]").forEach(input => {
-    input.addEventListener("change", async () => {
-      const original = input.files[0];
-      if (!original) return;
-      processando++;
-      salvar.disabled = true;
-      let final = original;
-      try {
-        final = await reduzir(original);
-        const dt = new DataTransfer();
-        dt.items.add(final);
-        input.files = dt.files;
-      } catch (e) {
-        // se o navegador não conseguir reduzir, manda a original (o servidor confere o formato)
-      }
-      const antigo = input.closest("label").querySelector(".avatar");
-      const previa = document.createElement("img");
-      previa.className = antigo.className;
-      previa.alt = "";
-      previa.src = URL.createObjectURL(final);
-      antigo.replaceWith(previa);
-      input.closest("li").classList.add("alterado");
-      processando--;
-      salvar.disabled = processando > 0;
-    });
-  });
-})();
-</script>
 {% endblock %}

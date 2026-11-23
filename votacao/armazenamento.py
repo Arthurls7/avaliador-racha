@@ -325,3 +325,9 @@ def publicar_linhas():
     with editar(LINHAS) as dados:
         dados["publicado"] = True
         dados["data"] = agora()
+
+
+def despublicar_linhas():
+    """Esconde as linhas da página inicial (o sorteio continua salvo para ajustar e publicar de novo)."""
+    with editar(LINHAS) as dados:
+        dados["publicado"] = False

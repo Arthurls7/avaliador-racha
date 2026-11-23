@@ -40,10 +40,15 @@
 
 {% if blocos %}
   {% if publicado %}
-    <div class="msg success">✅ Publicado em {{ data }}. A galera já vê na aba Linhas da página inicial; ajustes aparecem na hora.</div>
+    <div class="msg success status">
+      <span>✅ Publicado em {{ data }}. A galera já vê na aba Linhas da página inicial; ajustes aparecem na hora.</span>
+      <form method="post" action="{% url 'votacao:painel_linhas_despublicar' %}">
+        {% csrf_token %}<button type="submit" class="botao secundario">🙈 Despublicar</button>
+      </form>
+    </div>
   {% else %}
     <div class="msg info status">
-      <span>🙈 Ainda não publicado: só você está vendo.</span>
+      <span>🙈 Não publicado: só você está vendo.</span>
       <form method="post" action="{% url 'votacao:painel_linhas_publicar' %}">
         {% csrf_token %}<button type="submit" class="botao">📣 Publicar linhas</button>
       </form>

@@ -205,15 +205,21 @@ def painel_sair(request):
 
 @_exige_admin
 def painel(request):
-    cadastro = [_visual(p) for p in arm.pessoas()]
-    linhas = resultados([p for p in cadastro if p["joga"]], arm.avaliacoes())
+    linhas = resultados([_visual(p) for p in arm.jogadores()], arm.avaliacoes())
     for linha in linhas:
         linha["nota_fmt"] = formatar(linha["nota"])
         linha["avaliou_data"] = _data(linha["avaliou"])
     return render(request, "votacao/painel.html", {
         "linhas": linhas,
         "ja_avaliaram": sum(1 for linha in linhas if linha["avaliou"]),
-        "cadastro": cadastro,
+    })
+
+
+@_exige_admin
+def painel_cadastro(request):
+    return render(request, "votacao/painel_cadastro.html", {
+        "cadastro": [_visual(p) for p in arm.pessoas()],
+        "total_avaliacoes": len(arm.avaliacoes()),
     })
 
 
@@ -236,7 +242,7 @@ def painel_adicionar(request):
 
 @_exige_admin
 @require_POST
-def painel_cadastro(request):
+def painel_cadastro_salvar(request):
     ids = set(request.POST.getlist("ids"))
     nomes = {pid: request.POST.get(f"nome_{pid}", "") for pid in ids}
     repetidos = arm.salvar_cadastro(ids, nomes, set(request.POST.getlist("joga")))
@@ -252,7 +258,7 @@ def painel_cadastro(request):
         messages.error(request, "Não deu para usar estas fotos (precisa ser JPG, PNG ou WebP de até 10 MB): "
                        + ", ".join(fotos_ruins))
     messages.success(request, "Cadastro salvo.")
-    return redirect("votacao:painel")
+    return redirect("votacao:painel_cadastro")
 
 
 @_exige_admin
@@ -260,7 +266,7 @@ def painel_cadastro(request):
 def painel_remover_foto(request):
     arm.remover_foto(request.POST.get("id", ""))
     messages.success(request, "Foto removida.")
-    return redirect("votacao:painel")
+    return redirect("votacao:painel_cadastro")
 
 
 @_exige_admin
@@ -269,7 +275,7 @@ def painel_excluir(request):
     pessoa = arm.excluir_pessoa(request.POST.get("id", ""))
     if pessoa:
         messages.success(request, f"{pessoa['nome']} foi excluído(a) do cadastro.")
-    return redirect("votacao:painel")
+    return redirect("votacao:painel_cadastro")
 
 
 @_exige_admin
@@ -277,7 +283,7 @@ def painel_excluir(request):
 def painel_zerar(request):
     arm.zerar_avaliacoes()
     messages.success(request, "Todas as avaliações foram apagadas.")
-    return redirect("votacao:painel")
+    return redirect("votacao:painel_cadastro")
 
 
 # ---------- administrador: linhas ----------
@@ -373,4 +379,12 @@ def painel_linhas_publicar(request):
     else:
         arm.publicar_linhas()
         messages.success(request, "📣 Linhas publicadas! A galera já vê na aba Linhas da página inicial.")
+    return redirect("votacao:painel_linhas")
+
+
+@_exige_admin
+@require_POST
+def painel_linhas_despublicar(request):
+    arm.despublicar_linhas()
+    messages.success(request, "🙈 Linhas escondidas da página inicial. Ajuste o que quiser e publique de novo.")
     return redirect("votacao:painel_linhas")
