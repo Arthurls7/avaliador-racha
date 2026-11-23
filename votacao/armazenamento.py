@@ -3,8 +3,10 @@
 dados/logins.json
     {"admin": {"usuario": "...", "senha": "<hash>"},
      "pessoas": [{"id": "joao-silva", "nome": "João Silva", "foto": "joao-silva-1732391234567.jpg",
-                  "joga": true}, ...]}
+                  "joga": true, "senha": "0427"}, ...]}
     "pessoas" é o cadastro de todo mundo que já jogou; "joga" marca quem está na lista da semana.
+    "senha" é a senha de 4 números de cada jogador. Fica em texto para o organizador poder ver e repassar
+    (com só 4 números, criptografar não protegeria nada; quem protege é o limite de tentativas erradas).
 
 dados/avaliacoes.json
     {"avaliacoes": {"<id de quem avaliou>": {"notas": {"<id>": 4, ...}, "nao_conhece": ["<id>", ...],
@@ -21,6 +23,7 @@ import copy
 import json
 import os
 import re
+import secrets
 import tempfile
 import threading
 import time
@@ -120,8 +123,8 @@ def definir_admin(usuario, senha):
 
 def pessoas():
     """Cadastro completo, em ordem alfabética."""
-    # quem foi cadastrado antes de existir "joga"/"foto" estava na lista, então joga
-    return [{"foto": None, "joga": True, **p} for p in ler(LOGINS)["pessoas"]]
+    # quem foi cadastrado antes de existir "joga"/"foto"/"senha" estava na lista, então joga
+    return [{"foto": None, "joga": True, "senha": None, **p} for p in ler(LOGINS)["pessoas"]]
 
 
 def jogadores():
@@ -155,6 +158,38 @@ def _novo_id(nome, usados):
     return pid
 
 
+def _senha_nova(usadas):
+    """4 números aleatórios (pode começar com 0), sem repetir a de outro jogador."""
+    while True:
+        senha = f"{secrets.randbelow(10000):04d}"
+        if senha not in usadas or len(usadas) >= 10000:
+            return senha
+
+
+def garantir_senhas():
+    """Cria senha para quem ainda não tem (ex.: cadastrados antes de existir senha). Devolve quantas criou."""
+    if all(p.get("senha") for p in ler(LOGINS)["pessoas"]):
+        return 0
+    criadas = 0
+    with editar(LOGINS) as dados:
+        usadas = {p.get("senha") for p in dados["pessoas"]}
+        for p in dados["pessoas"]:
+            if not p.get("senha"):
+                p["senha"] = _senha_nova(usadas)
+                usadas.add(p["senha"])
+                criadas += 1
+    return criadas
+
+
+def nova_senha(pessoa_id):
+    """Troca a senha de alguém (a antiga para de funcionar). Devolve a pessoa, ou None."""
+    with editar(LOGINS) as dados:
+        pessoa = next((p for p in dados["pessoas"] if p["id"] == pessoa_id), None)
+        if pessoa:
+            pessoa["senha"] = _senha_nova({p.get("senha") for p in dados["pessoas"]})
+    return pessoa
+
+
 def adicionar_pessoas(nomes, somente_estes=False):
     """Marca os nomes como jogando esta semana, cadastrando quem ainda não existe.
 
@@ -166,6 +201,7 @@ def adicionar_pessoas(nomes, somente_estes=False):
         lista = dados["pessoas"]
         por_nome = {p["nome"].casefold(): p for p in lista}
         usados = {p["id"] for p in lista}
+        senhas = {p.get("senha") for p in lista}
         if somente_estes:
             for p in lista:
                 p["joga"] = False
@@ -175,8 +211,10 @@ def adicionar_pessoas(nomes, somente_estes=False):
                 pessoa["joga"] = True
                 existentes += 1
             else:
-                pessoa = {"id": _novo_id(nome, usados), "nome": nome, "foto": None, "joga": True}
+                pessoa = {"id": _novo_id(nome, usados), "nome": nome, "foto": None, "joga": True,
+                          "senha": _senha_nova(senhas)}
                 usados.add(pessoa["id"])
+                senhas.add(pessoa["senha"])
                 por_nome[nome.casefold()] = pessoa
                 lista.append(pessoa)
                 novos += 1

@@ -6,7 +6,11 @@
                  border-bottom: 1px solid var(--borda); }
   .cadastro li:last-child { border-bottom: 0; }
   .cadastro li.fora { opacity: .55; }
-  .cadastro input[type=text] { flex: 1; min-width: 0; padding: 8px 10px; }
+  .campo-nome { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .campo-nome input[type=text] { width: 100%; padding: 8px 10px; }
+  .senha-pessoa { font-size: .82rem; color: var(--suave); padding-left: 2px; }
+  .senha-pessoa b { color: var(--texto); letter-spacing: .12em; }
+  .senha-pessoa .link { font-size: inherit; }
   .acoes-pessoa { display: flex; align-items: center; gap: 8px; }
   /* no celular, Joga / remover foto / excluir descem para baixo do nome, para o nome caber inteiro */
   @media (max-width: 480px) { .acoes-pessoa { flex-basis: 100%; padding-left: 62px; } }
@@ -37,7 +41,8 @@
 <section class="cartao">
   <h2>👥 Todo mundo que já jogou ({{ cadastro|length }})</h2>
   {% if cadastro %}
-    <p class="suave pequeno">Toque na foto para trocar (fica com anel verde até você salvar). Marque quem
+    <p class="suave pequeno">🔑 Cada um vota com a própria senha de 4 números: mande a senha para cada pessoa
+      no privado. Toque na foto para trocar (fica com anel verde até você salvar). Marque quem
       <strong>joga</strong> esta semana. Renomear não perde as avaliações.
       <button type="button" class="marcar" data-marcar="1">Marcar todos</button> ·
       <button type="button" class="marcar" data-marcar="0">Desmarcar todos</button></p>
@@ -52,7 +57,12 @@
               <span class="camera" aria-hidden="true">📷</span>
               <input type="file" name="foto_{{ p.id }}" accept="image/*" class="escondido" data-foto aria-label="Foto de {{ p.nome }}">
             </label>
-            <input type="text" name="nome_{{ p.id }}" value="{{ p.nome }}" required aria-label="Nome">
+            <div class="campo-nome">
+              <input type="text" name="nome_{{ p.id }}" value="{{ p.nome }}" required aria-label="Nome">
+              <span class="senha-pessoa">🔑 Senha <b>{{ p.senha }}</b> ·
+                <button type="submit" form="form-nova-senha" name="id" value="{{ p.id }}" class="link"
+                        data-confirmar="Gerar outra senha para {{ p.nome }}? A atual para de funcionar.">trocar</button></span>
+            </div>
             <div class="acoes-pessoa">
               <label class="joga"><input type="checkbox" name="joga" value="{{ p.id }}"{% if p.joga %} checked{% endif %}><span>Joga</span></label>
               {% if p.foto %}
@@ -72,6 +82,7 @@
     </form>
     <form method="post" action="{% url 'votacao:painel_remover_foto' %}" id="form-remover-foto">{% csrf_token %}</form>
     <form method="post" action="{% url 'votacao:painel_excluir' %}" id="form-excluir">{% csrf_token %}</form>
+    <form method="post" action="{% url 'votacao:painel_nova_senha' %}" id="form-nova-senha">{% csrf_token %}</form>
   {% else %}
     <p class="suave">Ninguém cadastrado ainda. Adicione a galera na aba <a href="{% url 'votacao:painel' %}">Semana</a>,
       na caixa "Quem joga esta semana".</p>

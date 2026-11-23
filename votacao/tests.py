@@ -4,6 +4,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
@@ -64,6 +65,20 @@ class NotasTest(SimpleTestCase):
         self.assertEqual(linhas["c"]["nota"], 1.5)
         self.assertEqual([l["id"] for l in resultados(pessoas, avaliacoes)], ["a", "b", "c"])
 
+    def test_desempate_maior_nota_e_depois_ordem_alfabetica(self):
+        nomes = {"bia": "Bia", "alvaro": "Álvaro", "caio": "Caio", "duda": "Duda", "eva": "Eva", "juiz": "Juiz"}
+        pessoas = [{"id": pid, "nome": nome} for pid, nome in nomes.items()]
+        avaliacoes = {
+            "juiz": {"notas": {"bia": 3, "alvaro": 3, "caio": 1, "duda": 4, "eva": 3}},
+            "eva": {"notas": {"bia": 3, "alvaro": 3, "caio": 5, "duda": 3}},
+        }
+        # Duda: média 3,5            -> 1º pela média
+        # Caio: média 3, maior nota 5 -> 2º pela maior nota
+        # Álvaro, Bia e Eva: média 3, maior nota 3 -> empate total, ordem alfabética (acento não atrapalha)
+        # Juiz: não recebeu nota      -> fim
+        ordem = [l["nome"] for l in resultados(pessoas, avaliacoes)]
+        self.assertEqual(ordem, ["Duda", "Caio", "Álvaro", "Bia", "Eva", "Juiz"])
+
 
 @override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
 class FluxoTest(SimpleTestCase):
@@ -75,12 +90,21 @@ class FluxoTest(SimpleTestCase):
         self.addCleanup(ajuste.disable)
         arm.adicionar_pessoas(["Davi", "Ana", "Caio", "Bruno"])
         arm.definir_admin("chefe", "segredo")
+        cache.clear()  # contador de senhas erradas
 
     def json(self, arquivo):
         return json.loads((self.pasta / "dados" / arquivo).read_text(encoding="utf-8"))
 
     def entrar(self):
         self.client.post(reverse("votacao:painel_entrar"), {"usuario": "chefe", "senha": "segredo"})
+
+    def senha(self, pessoa_id):
+        return next(p["senha"] for p in arm.pessoas() if p["id"] == pessoa_id)
+
+    def logar(self, pessoa_id):
+        """Entra como o jogador, com a senha dele."""
+        resposta = self.client.post(reverse("votacao:entrar", args=[pessoa_id]), {"senha": self.senha(pessoa_id)})
+        self.assertRedirects(resposta, reverse("votacao:avaliar", args=[pessoa_id]), fetch_redirect_response=False)
 
     def joga(self):
         return {p["nome"]: p["joga"] for p in arm.pessoas()}
@@ -110,6 +134,8 @@ class FluxoTest(SimpleTestCase):
         self.assertNotContains(self.client.get(reverse("votacao:inicio")), "Davi")
         self.assertRedirects(self.client.get(reverse("votacao:avaliar", args=["davi"])),
                              reverse("votacao:inicio"))
+        self.assertRedirects(self.client.get(reverse("votacao:entrar", args=["davi"])), reverse("votacao:inicio"))
+        self.logar("ana")
         self.assertNotContains(self.client.get(reverse("votacao:avaliar", args=["ana"])), "nota_davi")
 
     def test_renomear_mantem_id_e_avaliacoes(self):
@@ -141,7 +167,7 @@ class FluxoTest(SimpleTestCase):
     def test_dados_antigos_sem_joga_e_foto(self):
         (self.pasta / "dados" / "logins.json").write_text(
             json.dumps({"admin": None, "pessoas": [{"id": "ze", "nome": "Zé"}]}), encoding="utf-8")
-        self.assertEqual(arm.jogadores(), [{"id": "ze", "nome": "Zé", "foto": None, "joga": True}])
+        self.assertEqual(arm.jogadores(), [{"id": "ze", "nome": "Zé", "foto": None, "joga": True, "senha": None}])
 
     # ---------- fotos ----------
 
@@ -176,6 +202,7 @@ class FluxoTest(SimpleTestCase):
 
     def test_avaliar(self):
         url = reverse("votacao:avaliar", args=["ana"])
+        self.logar("ana")
         pagina = self.client.get(url)
         self.assertNotContains(pagina, "nota_ana")  # não avalia a si mesmo
         self.assertContains(pagina, 'name="nota_bruno"', count=7)  # botões de 0 a 5 + "Não conheço"
@@ -185,7 +212,8 @@ class FluxoTest(SimpleTestCase):
         registro = self.json("avaliacoes.json")["avaliacoes"]["ana"]
         self.assertEqual(registro["notas"], {"bruno": 0, "caio": 5, "davi": 3})
         self.assertEqual(registro["nao_conhece"], [])
-        # ao voltar, as notas vêm marcadas e a nota anterior aparece em cada cartão
+        # ao voltar (com a senha de novo), as notas vêm marcadas e a nota anterior aparece em cada cartão
+        self.logar("ana")
         pagina = self.client.get(url)
         self.assertContains(pagina, 'name="nota_davi" value="3" required aria-label="3" checked')
         for nota in ["0", "5", "3"]:
@@ -193,6 +221,7 @@ class FluxoTest(SimpleTestCase):
 
     def test_nao_conheco(self):
         url = reverse("votacao:avaliar", args=["ana"])
+        self.logar("ana")
         resposta = self.client.post(url, {"nota_bruno": "nao-conheco", "nota_caio": "4", "nota_davi": "nao-conheco"})
         self.assertRedirects(resposta, reverse("votacao:inicio"))
         registro = self.json("avaliacoes.json")["avaliacoes"]["ana"]
@@ -204,12 +233,14 @@ class FluxoTest(SimpleTestCase):
         self.assertEqual((linhas["bruno"]["nota"], linhas["bruno"]["qtd"]), (2, 1))
         self.assertEqual((linhas["caio"]["nota"], linhas["caio"]["qtd"]), (4, 1))
         # ao voltar, "Não conheço" vem marcado
+        self.logar("ana")
         pagina = self.client.get(url)
         self.assertContains(pagina, 'name="nota_bruno" value="nao-conheco" required checked')
         self.assertContains(pagina, "Nota anterior: <b>não conheço</b>", count=2)
 
     def test_avaliar_faltando_ou_fora_do_limite(self):
         url = reverse("votacao:avaliar", args=["ana"])
+        self.logar("ana")
         resposta = self.client.post(url, {"nota_bruno": "6", "nota_caio": "4", "nota_davi": "2.5"})
         self.assertContains(resposta, "para: Bruno, Davi.")
         self.assertContains(resposta, 'name="nota_caio" value="4" required aria-label="4" checked')  # não perde o que marcou
@@ -218,12 +249,101 @@ class FluxoTest(SimpleTestCase):
     def test_avaliacao_antiga_so_preenche_notas_inteiras(self):
         arm.salvar_avaliacao("ana", {"modo": "ranking", "ranking": ["caio", "davi", "bruno"],
                                      "notas": {"caio": 5.0, "davi": 2.75, "bruno": 0.5}})
+        self.logar("ana")
         pagina = self.client.get(reverse("votacao:avaliar", args=["ana"])).content.decode()
         self.assertEqual(pagina.count(" checked"), 1)
         self.assertIn('name="nota_caio" value="5" required aria-label="5" checked', pagina)
         # as quebradas não viram botão, mas aparecem como nota anterior
         self.assertIn("Nota anterior: <b>2,75</b>", pagina)
         self.assertIn("Nota anterior: <b>0,5</b>", pagina)
+
+    # ---------- senha de 4 números ----------
+
+    def test_cada_um_tem_uma_senha_de_4_numeros(self):
+        senhas = [p["senha"] for p in arm.pessoas()]
+        self.assertTrue(all(re.fullmatch(r"\d{4}", s) for s in senhas))
+        self.assertEqual(len(set(senhas)), len(senhas))  # uma diferente para cada um
+        arm.adicionar_pessoas(["Eva"])
+        self.assertRegex(self.senha("eva"), r"^\d{4}$")
+
+    def test_quem_foi_cadastrado_antes_das_senhas_ganha_uma(self):
+        admin = arm.ler(arm.LOGINS)["admin"]
+        (self.pasta / "dados" / "logins.json").write_text(
+            json.dumps({"admin": admin, "pessoas": [{"id": "ze", "nome": "Zé"}, {"id": "lia", "nome": "Lia"}]}),
+            encoding="utf-8")
+        self.assertContains(self.client.get(reverse("votacao:entrar", args=["ze"])), "ainda não foi criada")
+        self.entrar()
+        resposta = self.client.get(reverse("votacao:painel_cadastro"))
+        self.assertContains(resposta, "Senhas criadas para 2 pessoa(s)")
+        self.assertContains(resposta, f"Senha <b>{self.senha('ze')}</b>")
+        self.assertEqual(arm.garantir_senhas(), 0)
+        self.logar("ze")
+
+    def test_sem_senha_nao_ve_nem_muda_as_notas(self):
+        arm.salvar_avaliacao("ana", {"notas": {"bruno": 5, "caio": 4, "davi": 3}})
+        url = reverse("votacao:avaliar", args=["ana"])
+        tela_senha = reverse("votacao:entrar", args=["ana"])
+        self.assertRedirects(self.client.get(url), tela_senha)
+        self.assertRedirects(self.client.post(url, {"nota_bruno": "0", "nota_caio": "0", "nota_davi": "0"}), tela_senha)
+        self.assertEqual(arm.avaliacoes()["ana"]["notas"], {"bruno": 5, "caio": 4, "davi": 3})
+        pagina = self.client.get(tela_senha)
+        self.assertContains(pagina, 'inputmode="numeric"')
+        self.assertNotContains(pagina, "Nota anterior")
+        self.assertNotContains(pagina, "nota_bruno")
+
+    def test_senha_de_um_nao_abre_outro(self):
+        self.logar("ana")
+        self.assertRedirects(self.client.get(reverse("votacao:avaliar", args=["bruno"])),
+                             reverse("votacao:entrar", args=["bruno"]))
+        resposta = self.client.post(reverse("votacao:entrar", args=["bruno"]), {"senha": self.senha("ana")})
+        self.assertContains(resposta, "Senha errada")
+
+    def test_senha_errada_bloqueia_depois_de_5(self):
+        url = reverse("votacao:entrar", args=["ana"])
+        errada = next(f"{n:04d}" for n in range(10000) if f"{n:04d}" != self.senha("ana"))
+        for restam in [4, 3, 2]:
+            self.assertContains(self.client.post(url, {"senha": errada}), f"Mais {restam} tentativas")
+        self.assertContains(self.client.post(url, {"senha": errada}), "Mais 1 tentativa antes")
+        self.assertContains(self.client.post(url, {"senha": errada}), "Bloqueado por 10 minutos")
+        # bloqueado: nem a senha certa entra
+        self.assertContains(self.client.post(url, {"senha": self.senha("ana")}), "Muitas tentativas erradas")
+        self.logar("bruno")  # os outros não são afetados
+        cache.clear()  # passaram os 10 minutos
+        self.logar("ana")
+
+    def test_salvar_ou_sair_pede_a_senha_de_novo(self):
+        url = reverse("votacao:avaliar", args=["ana"])
+        self.logar("ana")
+        self.assertRedirects(self.client.get(reverse("votacao:entrar", args=["ana"])), url)  # já entrou
+        self.client.post(url, {"nota_bruno": "1", "nota_caio": "2", "nota_davi": "3"})
+        self.assertRedirects(self.client.get(url), reverse("votacao:entrar", args=["ana"]))
+        self.logar("ana")
+        self.assertEqual(self.client.get(url).status_code, 200)
+        self.assertRedirects(self.client.post(reverse("votacao:sair_jogador")), reverse("votacao:inicio"))
+        self.assertRedirects(self.client.get(url), reverse("votacao:entrar", args=["ana"]))
+
+    def test_entrada_vale_30_minutos(self):
+        self.logar("ana")
+        sessao = self.client.session
+        sessao["jogador"]["ate"] = 0
+        sessao.save()
+        self.assertRedirects(self.client.get(reverse("votacao:avaliar", args=["ana"])),
+                             reverse("votacao:entrar", args=["ana"]))
+
+    def test_organizador_troca_a_senha(self):
+        self.logar("ana")
+        antiga = self.senha("ana")
+        self.entrar()
+        resposta = self.client.post(reverse("votacao:painel_nova_senha"), {"id": "ana"}, follow=True)
+        self.assertRedirects(resposta, reverse("votacao:painel_cadastro"))
+        nova = self.senha("ana")
+        self.assertNotEqual(nova, antiga)
+        self.assertContains(resposta, f"Nova senha de Ana: {nova}")
+        # quem entrou com a senha antiga é deslogado, e a antiga não funciona mais
+        self.assertRedirects(self.client.get(reverse("votacao:avaliar", args=["ana"])),
+                             reverse("votacao:entrar", args=["ana"]))
+        self.assertContains(self.client.post(reverse("votacao:entrar", args=["ana"]), {"senha": antiga}), "Senha errada")
+        self.logar("ana")
 
     # ---------- abas públicas: linhas e ranking ----------
 
@@ -235,14 +355,16 @@ class FluxoTest(SimpleTestCase):
                 self.assertContains(resposta, f'href="{reverse(f"votacao:{outra}")}"')
 
     def test_cabecalho_racha_do_doug(self):
-        for url in [reverse("votacao:inicio"), reverse("votacao:avaliar", args=["ana"]), reverse("votacao:painel_entrar")]:
+        for url in [reverse("votacao:inicio"), reverse("votacao:entrar", args=["ana"]), reverse("votacao:painel_entrar")]:
             resposta = self.client.get(url)
             self.assertContains(resposta, "Racha do Doug</span>")
             self.assertContains(resposta, "· Racha do Doug</title>")
             self.assertContains(resposta, 'aria-label="Área do organizador"')
-        # na tela de avaliar, o menu marca "Avaliar"
-        self.assertContains(self.client.get(reverse("votacao:avaliar", args=["ana"])),
-                            f'href="{reverse("votacao:inicio")}" class="ativa" aria-current="page"')
+        # nas telas de senha e de avaliar, o menu marca "Avaliar"
+        avaliar_ativo = f'href="{reverse("votacao:inicio")}" class="ativa" aria-current="page"'
+        self.assertContains(self.client.get(reverse("votacao:entrar", args=["ana"])), avaliar_ativo)
+        self.logar("ana")
+        self.assertContains(self.client.get(reverse("votacao:avaliar", args=["ana"])), avaliar_ativo)
         self.entrar()
         for nome in ["painel", "painel_linhas", "painel_cadastro"]:
             resposta = self.client.get(reverse(f"votacao:{nome}"))
@@ -254,12 +376,14 @@ class FluxoTest(SimpleTestCase):
     def test_ranking_publico_sem_media(self):
         arm.salvar_avaliacao("ana", {"notas": {"bruno": 5, "caio": 2, "davi": 2}})
         arm.salvar_avaliacao("bruno", {"notas": {"ana": 3, "caio": 4, "davi": 4}})
-        # médias: Bruno 5; Ana, Caio e Davi 3 (empatados)
+        # médias: Bruno 5; Ana, Caio e Davi 3. Desempate: Caio e Davi receberam um 4 (Ana no máximo 3);
+        # entre Caio e Davi, ordem alfabética.
         resposta = self.client.get(reverse("votacao:ranking"))
         pagina = resposta.content.decode()
-        self.assertEqual(re.findall(r'<span class="nome">([^<]+)</span>', pagina), ["Bruno", "Ana", "Caio", "Davi"])
-        self.assertEqual(pagina.count("🥇"), 1)
-        self.assertEqual(pagina.count("🥈"), 3)  # empate = mesma posição
+        self.assertEqual(re.findall(r'<span class="nome">([^<]+)</span>', pagina), ["Bruno", "Caio", "Davi", "Ana"])
+        for medalha in ["🥇", "🥈", "🥉"]:
+            self.assertEqual(pagina.count(medalha), 1)  # sem posições repetidas
+        self.assertContains(resposta, "4º", count=1)
         for media in ["5,00", "3,00", "5,0", "3,0"]:
             self.assertNotIn(media, pagina)
         self.assertContains(resposta, "2 de 4 já avaliaram")
@@ -337,17 +461,20 @@ class FluxoTest(SimpleTestCase):
         self.assertRedirects(self.client.get(reverse("votacao:painel_cadastro")), reverse("votacao:painel_entrar"))
         arm.salvar_sorteio([["ana", "bruno"]], 2, True)
         arm.publicar_linhas()
+        senha_ana = self.senha("ana")
         for nome in ["painel_adicionar", "painel_cadastro_salvar", "painel_excluir", "painel_zerar", "painel_remover_foto",
-                     "painel_linhas_sortear", "painel_linhas_publicar", "painel_linhas_despublicar",
-                     "painel_linhas_ajustar"]:
+                     "painel_nova_senha", "painel_linhas_sortear", "painel_linhas_publicar",
+                     "painel_linhas_despublicar", "painel_linhas_ajustar"]:
             resposta = self.client.post(reverse(f"votacao:{nome}"), {"nomes": "Hacker", "id": "ana", "ids": ["ana"]})
             self.assertRedirects(resposta, reverse("votacao:painel_entrar"))
         self.assertEqual(len(arm.jogadores()), 4)
+        self.assertEqual(self.senha("ana"), senha_ana)
         self.assertEqual((arm.linhas()["linhas"], arm.linhas()["publicado"]), ([["ana", "bruno"]], True))
         resposta = self.client.post(reverse("votacao:painel_entrar"), {"usuario": "chefe", "senha": "errada"})
         self.assertContains(resposta, "Usuário ou senha incorretos.")
 
     def test_painel(self):
+        self.logar("ana")
         self.client.post(reverse("votacao:avaliar", args=["ana"]), {"nota_bruno": "1", "nota_caio": "5", "nota_davi": "3"})
         self.entrar()
         resposta = self.client.get(reverse("votacao:painel"))

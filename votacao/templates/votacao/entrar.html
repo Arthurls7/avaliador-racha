@@ -1,0 +1,41 @@
+{% extends "votacao/base.html" %}
+{% block titulo %}Senha · {{ pessoa.nome }}{% endblock %}
+{% block estilo %}
+  .entrar { text-align: center; padding: 26px 18px 22px; }
+  .entrar .avatar { --tam: 120px; }
+  .entrar h1 { margin-top: 14px; }
+  .entrar form { max-width: 280px; margin: 18px auto 0; }
+  .pin { display: block; width: 100%; margin: 0 auto 14px; padding: 12px; text-align: center;
+         font: inherit; font-size: 2rem; font-weight: 800; letter-spacing: .6em; text-indent: .6em;
+         border: 2px solid var(--borda); border-radius: 16px; background: #fff; }
+  .pin:focus { outline: none; border-color: var(--verde); }
+  .entrar .msg { text-align: left; }
+{% endblock %}
+{% block menu %}{% include "votacao/_menu_publico.html" with aba="avaliar" %}{% endblock %}
+{% block conteudo %}
+<a class="voltar" href="{% url 'votacao:inicio' %}">← Não é você?</a>
+<div class="cartao entrar">
+  {% include "votacao/_avatar.html" with p=pessoa tamanho="grande" %}
+  <h1>Oi, {{ pessoa.nome }}! 👋</h1>
+  <p class="suave">Digite a sua senha de 4 números para dar e ver as suas notas.</p>
+  {% if erro %}<div class="msg error">{{ erro }}</div>{% endif %}
+  <form method="post" id="form-senha">
+    {% csrf_token %}
+    <input class="pin" type="password" name="senha" inputmode="numeric" pattern="[0-9]{4}" maxlength="4"
+           autocomplete="off" required autofocus aria-label="Senha de 4 números" placeholder="••••">
+    <button type="submit" class="botao largo">Entrar</button>
+  </form>
+  <p class="suave pequeno">Não sabe a sua senha? Peça ao organizador.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // só números; ao digitar o 4º, já entra
+  const pin = document.querySelector(".pin");
+  pin.addEventListener("input", () => {
+    pin.value = pin.value.replace(/\D/g, "").slice(0, 4);
+    if (pin.value.length === 4) pin.form.requestSubmit();
+  });
+</script>
+{% endblock %}

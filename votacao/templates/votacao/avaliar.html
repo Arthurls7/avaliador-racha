@@ -45,7 +45,9 @@
 {% endblock %}
 {% block menu %}{% include "votacao/_menu_publico.html" with aba="avaliar" %}{% endblock %}
 {% block conteudo %}
-<a class="voltar" href="{% url 'votacao:inicio' %}">← Não é você?</a>
+<form method="post" action="{% url 'votacao:sair_jogador' %}">
+  {% csrf_token %}<button type="submit" class="voltar link">← Sair</button>
+</form>
 <div class="ola">
   {% include "votacao/_avatar.html" with p=pessoa tamanho="grande" %}
   <div>

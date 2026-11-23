@@ -17,7 +17,7 @@
 {% block conteudo %}
 {% if pessoas %}
   <h1>Quem é você? 👋</h1>
-  <p class="suave">Toque em você para avaliar a galera do racha desta semana.</p>
+  <p class="suave">Toque em você e digite a sua senha de 4 números para avaliar a galera do racha desta semana. 🔑</p>
   <div class="grade">
     {% for p in pessoas %}
       <a class="jogador" href="{% url 'votacao:avaliar' p.id %}">

@@ -3,7 +3,11 @@
 - Cada pessoa dá uma nota de 0 a 5 (números inteiros) para cada um dos outros jogadores da semana,
   ou marca "Não conheço" (aí a opinião dela sobre aquele jogador não entra na conta).
 - Resultado de cada jogador: média das notas que ele recebeu.
+- Ordem do ranking: maior média; no empate, quem recebeu a maior nota; se ainda empatar, ordem alfabética.
+  Assim cada um tem uma posição só (1º, 2º, 3º...), sem posições repetidas.
 """
+
+from .armazenamento import ordem_alfabetica
 
 OPCOES_NOTA = range(6)  # 0, 1, 2, 3, 4, 5
 NAO_CONHECO = "nao-conheco"
@@ -22,8 +26,18 @@ def _media(valores):
     return sum(valores) / len(valores) if valores else None
 
 
+def _ordem_do_ranking(linha):
+    sem_nota = linha["nota"] is None
+    return (
+        sem_nota,                                            # quem não tem nota vai para o fim
+        0 if sem_nota else -round(linha["nota"], 6),         # 1º: maior média (arredonda p/ empate de verdade)
+        0 if sem_nota else -linha["maior"],                  # 2º: maior nota recebida
+        ordem_alfabetica(linha["nome"]),                     # 3º: ordem alfabética
+    )
+
+
 def resultados(pessoas, avaliacoes):
-    """Uma linha por pessoa, da maior nota para a menor (quem não tem nota fica no fim)."""
+    """Uma linha por pessoa, na ordem do ranking (quem não tem nota fica no fim)."""
     ids = {p["id"] for p in pessoas}
     recebidas = {pid: [] for pid in ids}
 
@@ -39,10 +53,11 @@ def resultados(pessoas, avaliacoes):
         "id": p["id"],
         "nome": p["nome"],
         "nota": _media(recebidas[p["id"]]),
+        "maior": max(recebidas[p["id"]], default=None),
         "qtd": len(recebidas[p["id"]]),
         "avaliou": avaliacoes.get(p["id"]),
     } for p in pessoas]
-    linhas.sort(key=lambda l: (l["nota"] is None, -(l["nota"] or 0)))
+    linhas.sort(key=_ordem_do_ranking)
     return linhas
 
 

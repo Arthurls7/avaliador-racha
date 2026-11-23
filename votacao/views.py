@@ -1,11 +1,14 @@
+import time
 import zlib
 from datetime import datetime
 from functools import wraps
 
 from django.contrib import messages
+from django.core.cache import cache
 from django.http import FileResponse, Http404
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.crypto import constant_time_compare
 from django.views.decorators.http import require_POST
 
 from . import armazenamento as arm
@@ -18,13 +21,19 @@ CORES = ["#d1495b", "#00798c", "#30638e", "#6a4c93", "#2b9348", "#c8553d", "#3d5
 CORES_LINHAS = ["#2b9254", "#e07a1f", "#2f6fbf", "#c0392b", "#7b4fb3", "#1d9aa5", "#b8860b", "#d63384"]
 MEDALHAS = {1: "🥇", 2: "🥈", 3: "🥉"}
 
+# senha de 4 números de cada jogador
+SESSAO_JOGADOR = "jogador"
+MINUTOS_LOGADO = 30      # depois disso (ou ao salvar as notas) precisa digitar a senha de novo
+MAX_ERROS_SENHA = 5      # tentativas erradas seguidas antes de bloquear aquele jogador
+MINUTOS_BLOQUEIO = 10
+
 
 def _visual(pessoa):
-    """Acrescenta o que o template precisa para desenhar o avatar."""
+    """Acrescenta o que o template precisa para desenhar o avatar (e nunca leva a senha junto)."""
     palavras = pessoa["nome"].split()
     iniciais = palavras[0][0] + (palavras[-1][0] if len(palavras) > 1 else "")
     return {
-        **pessoa,
+        **{k: v for k, v in pessoa.items() if k != "senha"},
         "iniciais": iniciais.upper(),
         "cor": CORES[zlib.crc32(pessoa["id"].encode()) % len(CORES)],
         "foto_url": reverse("votacao:foto", args=[pessoa["foto"]]) if pessoa.get("foto") else "",
@@ -32,10 +41,18 @@ def _visual(pessoa):
 
 
 def _jogador_ou_volta(request, pessoa_id):
+    """O jogador como está salvo (com a senha), ou None com aviso se não joga esta semana."""
     pessoa = arm.buscar_jogador(pessoa_id)
     if not pessoa:
         messages.error(request, "Essa pessoa não está na lista desta semana.")
-    return _visual(pessoa) if pessoa else None
+    return pessoa
+
+
+def _logado_como(request, pessoa):
+    """Entrou com a senha atual desse jogador há menos de MINUTOS_LOGADO?"""
+    sessao = request.session.get(SESSAO_JOGADOR) or {}
+    return (bool(pessoa.get("senha")) and sessao.get("id") == pessoa["id"]
+            and sessao.get("senha") == pessoa["senha"] and sessao.get("ate", 0) > time.time())
 
 
 def _outros(pessoa_id):
@@ -102,19 +119,13 @@ def ver_linhas(request):
 
 
 def ver_ranking(request):
-    """Só a ordem: a média de cada um não aparece."""
+    """Só a ordem (a média de cada um não aparece). Empates já vêm desfeitos por resultados()."""
     jogadores = [_visual(p) for p in arm.jogadores()]
     avaliacoes = arm.avaliacoes()
-    ranking, sem_nota, anterior = [], [], None
-    for linha in resultados(jogadores, avaliacoes):
-        if linha["nota"] is None:
-            sem_nota.append(linha["pessoa"])
-            continue
-        # empate na média = mesma posição
-        empate = anterior is not None and abs(linha["nota"] - anterior) < 1e-9
-        posicao = ranking[-1]["posicao"] if empate else len(ranking) + 1
-        anterior = linha["nota"]
-        ranking.append({"posicao": posicao, "medalha": MEDALHAS.get(posicao, ""), "pessoa": linha["pessoa"]})
+    linhas = resultados(jogadores, avaliacoes)
+    com_nota = [linha["pessoa"] for linha in linhas if linha["nota"] is not None]
+    sem_nota = [linha["pessoa"] for linha in linhas if linha["nota"] is None]
+    ranking = [{"posicao": i, "medalha": MEDALHAS.get(i, ""), "pessoa": p} for i, p in enumerate(com_nota, start=1)]
     return render(request, "votacao/ranking.html", {
         "ranking": ranking,
         "sem_nota": sem_nota,
@@ -123,10 +134,52 @@ def ver_ranking(request):
     })
 
 
-def avaliar(request, pessoa_id):
-    pessoa = _jogador_ou_volta(request, pessoa_id)
-    if not pessoa:
+def entrar(request, pessoa_id):
+    """Pede a senha de 4 números do jogador antes de mostrar ou mudar as notas dele."""
+    jogador = _jogador_ou_volta(request, pessoa_id)
+    if not jogador:
         return redirect("votacao:inicio")
+    if _logado_como(request, jogador):
+        return redirect("votacao:avaliar", pessoa_id=pessoa_id)
+
+    erro = None
+    if not jogador["senha"]:
+        erro = "Sua senha ainda não foi criada. Peça ao organizador."
+    elif request.method == "POST":
+        chave = f"senha-erros-{pessoa_id}"
+        erros = cache.get(chave, 0)
+        if erros >= MAX_ERROS_SENHA:
+            erro = f"Muitas tentativas erradas. Espere {MINUTOS_BLOQUEIO} minutos ou peça a senha ao organizador."
+        elif constant_time_compare(request.POST.get("senha", "").strip(), jogador["senha"]):
+            cache.delete(chave)
+            request.session.cycle_key()
+            request.session[SESSAO_JOGADOR] = {
+                "id": pessoa_id, "senha": jogador["senha"], "ate": time.time() + MINUTOS_LOGADO * 60,
+            }
+            return redirect("votacao:avaliar", pessoa_id=pessoa_id)
+        else:
+            erros += 1
+            cache.set(chave, erros, MINUTOS_BLOQUEIO * 60)
+            restam = MAX_ERROS_SENHA - erros
+            erro = "Senha errada. " + (f"Mais {restam} tentativa{'s' if restam > 1 else ''} antes de bloquear."
+                                       if restam else f"Bloqueado por {MINUTOS_BLOQUEIO} minutos.")
+    return render(request, "votacao/entrar.html", {"pessoa": _visual(jogador), "erro": erro})
+
+
+@require_POST
+def sair_jogador(request):
+    request.session.pop(SESSAO_JOGADOR, None)
+    messages.success(request, "Pronto, você saiu.")
+    return redirect("votacao:inicio")
+
+
+def avaliar(request, pessoa_id):
+    jogador = _jogador_ou_volta(request, pessoa_id)
+    if not jogador:
+        return redirect("votacao:inicio")
+    if not _logado_como(request, jogador):  # só o próprio jogador, com a senha dele
+        return redirect("votacao:entrar", pessoa_id=pessoa_id)
+    pessoa = _visual(jogador)
     outros = _outros(pessoa_id)
     anterior = arm.avaliacoes().get(pessoa_id) or {}
     notas_antes = anterior.get("notas", {})
@@ -151,7 +204,10 @@ def avaliar(request, pessoa_id):
                 "notas": {pid: v for pid, v in escolhas.items() if v != NAO_CONHECO},
                 "nao_conhece": [pid for pid, v in escolhas.items() if v == NAO_CONHECO],
             })
-            messages.success(request, f"Valeu, {pessoa['nome']}! Suas notas foram salvas. 🎉")
+            # sai ao salvar: num celular compartilhado, o próximo precisa da própria senha
+            request.session.pop(SESSAO_JOGADOR, None)
+            messages.success(request, f"Valeu, {pessoa['nome']}! Suas notas foram salvas. 🎉 "
+                                      "Para mudar depois, é só entrar de novo com a sua senha.")
             return redirect("votacao:inicio")
         erro = "Faltou escolher uma nota (ou \"Não conheço\") para: " + ", ".join(faltando) + "."
 
@@ -203,8 +259,15 @@ def painel_sair(request):
     return redirect("votacao:inicio")
 
 
+def _avisar_senhas_criadas(request):
+    criadas = arm.garantir_senhas()
+    if criadas:
+        messages.success(request, f"🔑 Senhas criadas para {criadas} pessoa(s). Elas estão na aba Cadastro.")
+
+
 @_exige_admin
 def painel(request):
+    _avisar_senhas_criadas(request)
     linhas = resultados([_visual(p) for p in arm.jogadores()], arm.avaliacoes())
     for linha in linhas:
         linha["nota_fmt"] = formatar(linha["nota"])
@@ -217,10 +280,20 @@ def painel(request):
 
 @_exige_admin
 def painel_cadastro(request):
+    _avisar_senhas_criadas(request)
     return render(request, "votacao/painel_cadastro.html", {
-        "cadastro": [_visual(p) for p in arm.pessoas()],
+        "cadastro": [{**_visual(p), "senha": p["senha"]} for p in arm.pessoas()],
         "total_avaliacoes": len(arm.avaliacoes()),
     })
+
+
+@_exige_admin
+@require_POST
+def painel_nova_senha(request):
+    pessoa = arm.nova_senha(request.POST.get("id", ""))
+    if pessoa:
+        messages.success(request, f"🔑 Nova senha de {pessoa['nome']}: {pessoa['senha']}. A antiga não funciona mais.")
+    return redirect("votacao:painel_cadastro")
 
 
 @_exige_admin
@@ -233,7 +306,7 @@ def painel_adicionar(request):
     novos, existentes = arm.adicionar_pessoas(nomes, somente_estes=bool(request.POST.get("somente_estes")))
     partes = []
     if novos:
-        partes.append(f"{novos} cadastrado(s) agora")
+        partes.append(f"{novos} cadastrado(s) agora (as senhas estão na aba Cadastro)")
     if existentes:
         partes.append(f"{existentes} já estava(m) no cadastro")
     messages.success(request, "Lista da semana atualizada: " + " e ".join(partes) + ".")
