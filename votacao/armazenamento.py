@@ -13,8 +13,12 @@ dados/avaliacoes.json
                                              "data": "..."}, ...}}
 
 dados/linhas.json
-    {"linhas": [["<id>", ...], ...], "publicado": false, "data": "...", "por_linha": 5, "equilibrar": true}
+    {"linhas": [["<id>", ...], ...], "publicado": false, "data": "...", "por_linha": 5, "equilibrar": true,
+     "pedidos": [{"id": "a1b2c3d4", "jogador": "<id>", "tipo": "troca" | "mudar", "com": "<id>" | null,
+                  "destino": 2 | null, "motivo": "...", "data": "...",
+                  "status": "pendente" | "aprovado" | "recusado", "resolvido_em": "..." | null}, ...]}
     As linhas (times) sorteadas; só aparecem na página inicial depois de publicadas.
+    "pedidos" são os pedidos de troca de linha dos jogadores, que o organizador aprova ou recusa.
 
 As fotos ficam em MEDIA_ROOT/fotos/.
 """
@@ -51,7 +55,7 @@ TAMANHO_MAX_FOTO = 10 * 1024 * 1024
 _PADRAO = {
     LOGINS: {"admin": None, "pessoas": []},
     AVALIACOES: {"avaliacoes": {}},
-    LINHAS: {"linhas": [], "publicado": False, "data": None, "por_linha": 5, "equilibrar": True},
+    LINHAS: {"linhas": [], "publicado": False, "data": None, "por_linha": 5, "equilibrar": True, "pedidos": []},
 }
 _trava_thread = threading.Lock()
 
@@ -262,6 +266,7 @@ def excluir_pessoa(pessoa_id):
                     registro[campo].remove(pessoa_id)
     with editar(LINHAS) as dados:
         dados["linhas"] = [[j for j in linha if j != pessoa_id] for linha in dados["linhas"]]
+        dados["pedidos"] = [p for p in dados.get("pedidos", []) if pessoa_id not in (p["jogador"], p.get("com"))]
     _apagar_foto(pessoa.get("foto"))
     return pessoa
 
@@ -347,9 +352,10 @@ def linhas():
 
 
 def salvar_sorteio(novas_linhas, por_linha, equilibrar):
-    """Sorteio novo: fica escondido da galera até ser publicado."""
+    """Sorteio novo: fica escondido da galera até ser publicado. Os pedidos de troca antigos são apagados."""
     with editar(LINHAS) as dados:
-        dados.update(linhas=novas_linhas, publicado=False, data=agora(), por_linha=por_linha, equilibrar=equilibrar)
+        dados.update(linhas=novas_linhas, publicado=False, data=agora(), por_linha=por_linha, equilibrar=equilibrar,
+                     pedidos=[])
 
 
 def ajustar_linhas(novas_linhas):
@@ -369,3 +375,46 @@ def despublicar_linhas():
     """Esconde as linhas da página inicial (o sorteio continua salvo para ajustar e publicar de novo)."""
     with editar(LINHAS) as dados:
         dados["publicado"] = False
+
+
+# ---------- pedidos de troca de linha (também em linhas.json) ----------
+
+MAX_PEDIDOS_RESOLVIDOS = 30  # guarda só os últimos, para o arquivo não crescer para sempre
+
+
+def pedidos():
+    return linhas()["pedidos"]
+
+
+def pedir_troca(jogador, tipo, com=None, destino=None, motivo=""):
+    """Registra o pedido do jogador. Se ele já tinha um pendente, o novo substitui o antigo."""
+    with editar(LINHAS) as dados:
+        lista = [p for p in dados.get("pedidos", []) if not (p["jogador"] == jogador and p["status"] == "pendente")]
+        lista.append({
+            "id": secrets.token_hex(4), "jogador": jogador, "tipo": tipo, "com": com, "destino": destino,
+            "motivo": motivo, "data": agora(), "status": "pendente", "resolvido_em": None,
+        })
+        dados["pedidos"] = lista
+
+
+def cancelar_pedido(jogador):
+    with editar(LINHAS) as dados:
+        dados["pedidos"] = [p for p in dados.get("pedidos", [])
+                            if not (p["jogador"] == jogador and p["status"] == "pendente")]
+
+
+def resolver_pedido(pedido_id, aprovado, novas_linhas=None):
+    """Marca o pedido como aprovado (gravando as linhas com a troca) ou recusado. Devolve o pedido, ou None."""
+    with editar(LINHAS) as dados:
+        lista = dados.get("pedidos", [])
+        pedido = next((p for p in lista if p["id"] == pedido_id and p["status"] == "pendente"), None)
+        if pedido:
+            pedido["status"] = "aprovado" if aprovado else "recusado"
+            pedido["resolvido_em"] = agora()
+            if aprovado:
+                dados["linhas"] = [linha for linha in novas_linhas if linha]
+                dados["data"] = agora()
+            pendentes = [p for p in lista if p["status"] == "pendente"]
+            resolvidos = [p for p in lista if p["status"] != "pendente"][-MAX_PEDIDOS_RESOLVIDOS:]
+            dados["pedidos"] = resolvidos + pendentes
+    return pedido

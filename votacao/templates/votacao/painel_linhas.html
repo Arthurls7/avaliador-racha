@@ -16,6 +16,10 @@
 {% block menu %}{% include "votacao/_menu_painel.html" with aba="linhas" %}{% endblock %}
 {% block conteudo %}
 <h1>👥 Linhas</h1>
+{% if trocas_pendentes %}
+  <div class="msg info">🔄 {{ trocas_pendentes }} pedido{{ trocas_pendentes|pluralize }} de troca esperando:
+    <a href="{% url 'votacao:painel_trocas' %}">ver na aba Trocas</a>.</div>
+{% endif %}
 <section class="cartao">
   <h2>🎲 Sortear linhas</h2>
   {% if total %}
@@ -29,7 +33,7 @@
         <input type="checkbox" name="equilibrar"{% if equilibrar %} checked{% endif %}>
         <span>Equilibrar pelas notas (as linhas ficam com médias parecidas; desmarcado = sorteio puro)</span>
       </label>
-      <button type="submit" class="botao largo"{% if blocos %} data-confirmar="Sortear de novo? As linhas atuais serão substituídas."{% endif %}>
+      <button type="submit" class="botao largo"{% if blocos %} data-confirmar="Sortear de novo? As linhas atuais serão substituídas{% if trocas_pendentes %} e os pedidos de troca serão apagados{% endif %}."{% endif %}>
         🎲 {% if blocos %}Sortear de novo{% else %}Sortear{% endif %}
       </button>
     </form>

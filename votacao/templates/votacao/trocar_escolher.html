@@ -1,0 +1,16 @@
+{% extends "votacao/base.html" %}
+{% block titulo %}Pedir troca{% endblock %}
+{% block menu %}{% include "votacao/_menu_publico.html" with aba="linhas" %}{% endblock %}
+{% block conteudo %}
+<a class="voltar" href="{% url 'votacao:linhas' %}">← Voltar para as linhas</a>
+<h1>🔄 Quem quer trocar?</h1>
+<p class="suave">Toque em você e digite a sua senha de 4 números para pedir troca de linha. 🔑</p>
+<div class="grade">
+  {% for p in pessoas %}
+    <a class="jogador" href="{% url 'votacao:trocar' p.id %}">
+      {% include "votacao/_avatar.html" with p=p tamanho="grande" %}
+      <span class="nome">{{ p.nome }}</span>
+    </a>
+  {% endfor %}
+</div>
+{% endblock %}

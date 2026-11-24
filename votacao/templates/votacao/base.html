@@ -48,10 +48,22 @@
                   cursor: pointer; }
     .botao-topo:hover { background: rgba(255, 255, 255, .2); }
     a.botao-topo { padding: 0; width: 40px; }
+    /* bolinha amarela com quantos pedidos de troca estão esperando (menu do painel) */
+    .contador-menu { display: inline-grid; place-items: center; min-width: 1.35em; height: 1.35em; padding: 0 .3em;
+                     margin-left: 4px; border-radius: 999px; background: var(--amarelo); color: var(--texto);
+                     font-size: .75rem; font-weight: 800; vertical-align: 1px; }
     @media (max-width: 640px) {
       .menu { order: 4; flex: 1 1 100%; }
-      .menu a { flex: 1; padding: 9px 4px; }
+      .menu a { flex: 1 1 auto; padding: 9px 4px; }
     }
+    /* computador: nome numa linha só; abas um pouco mais justas para caberem ao lado */
+    @media (min-width: 641px) {
+      .marca { flex: 0 0 auto; margin-right: auto; }
+      .marca .nome-racha { white-space: nowrap; }
+      .menu a { padding: 8px 11px; }
+    }
+    /* o painel tem 4 abas: em tela estreita os emojis do menu somem para caber */
+    @media (max-width: 440px) { .menu .emoji { display: none; } }
     @media (max-width: 360px) {
       .marca .nome-racha { font-size: 1.12rem; }
       .bola { font-size: 1.45rem; }
@@ -127,6 +139,18 @@
     .faixa-linha { border-top: 6px solid var(--cor); }
     .faixa-linha h2 { display: flex; align-items: center; gap: 8px; }
     .faixa-linha h2::before { content: ""; width: 14px; height: 14px; border-radius: 50%; background: var(--cor); flex: none; }
+    /* grade de fotos para escolher "quem é você" */
+    .grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 12px; margin: 16px 0; }
+    .jogador { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px;
+               padding: 18px 8px 14px; background: #fff; border: 2px solid transparent; border-radius: var(--raio);
+               box-shadow: var(--sombra); color: var(--texto); text-decoration: none; text-align: center;
+               transition: transform .12s, border-color .12s; }
+    .jogador:hover { border-color: var(--verde); transform: translateY(-2px); }
+    .jogador:active { transform: scale(.96); }
+    .jogador .nome { font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+    .jogador .selo { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%;
+                     display: grid; place-items: center; background: var(--verde); color: #fff; font-size: .8rem;
+                     font-weight: 800; box-shadow: 0 0 0 2px #fff; }
     .vazio { text-align: center; padding: 32px 16px; }
     .vazio .grande { font-size: 3rem; }
     {% block estilo %}{% endblock %}

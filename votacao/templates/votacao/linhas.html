@@ -4,12 +4,16 @@
   .linhas { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0 14px; }
   .linhas h2 { margin-bottom: 6px; }
   .linhas .quantos { margin-left: auto; font-size: .8rem; font-weight: 700; color: var(--suave); }
+  .pedir-troca { margin: 4px 0 6px; }
 {% endblock %}
 {% block menu %}{% include "votacao/_menu_publico.html" with aba="linhas" %}{% endblock %}
 {% block conteudo %}
 {% if linhas %}
   <h1>👥 Linhas</h1>
   <p class="suave">Sorteadas em {{ data }}. Bom jogo! ⚽</p>
+  <div class="acoes pedir-troca">
+    <a class="botao secundario" href="{% url 'votacao:trocar_escolher' %}">🔄 Pedir troca de linha</a>
+  </div>
   <div class="linhas">
     {% for linha in linhas %}
       <section class="cartao faixa-linha" style="--cor: {{ linha.cor }}">

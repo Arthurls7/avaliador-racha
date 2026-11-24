@@ -1,0 +1,67 @@
+{% extends "votacao/base.html" %}
+{% block titulo %}Pedir troca · {{ pessoa.nome }}{% endblock %}
+{% block estilo %}
+  .ola { display: flex; align-items: center; gap: 14px; margin: 14px 0 4px; }
+  .ola h1 { margin: 0; }
+  .ola p { margin: 4px 0 0; }
+  .etiqueta { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px;
+              background: var(--cor); color: #fff; font-weight: 800; }
+  .pedido select, .pedido input[type=text] { display: block; width: 100%; margin: 6px 0 14px; }
+  .status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+  .status form { margin: 0; }
+{% endblock %}
+{% block menu %}{% include "votacao/_menu_publico.html" with aba="linhas" %}{% endblock %}
+{% block conteudo %}
+<form method="post" action="{% url 'votacao:sair_jogador' %}">
+  {% csrf_token %}<button type="submit" class="voltar link">← Sair</button>
+</form>
+<div class="ola">
+  {% include "votacao/_avatar.html" with p=pessoa tamanho="grande" %}
+  <div>
+    <h1>Oi, {{ pessoa.nome }}!</h1>
+    {% if minha %}<p>Você está na <span class="etiqueta" style="--cor: {{ minha.cor }}">Linha {{ minha.numero }}</span></p>{% endif %}
+  </div>
+</div>
+
+{% if not minha %}
+  <div class="cartao">Você não está em nenhuma linha agora. Fale com o organizador.</div>
+{% else %}
+  {% if ultimo %}
+    <div class="msg {% if ultimo.status == 'aprovado' %}success{% else %}error{% endif %}">
+      Seu último pedido ({{ ultimo.texto }}) foi {% if ultimo.status == 'aprovado' %}aprovado ✅{% else %}recusado ❌{% endif %}.
+    </div>
+  {% endif %}
+  {% if pendente %}
+    <div class="msg info status">
+      <span>⏳ Seu pedido: <strong>{{ pendente }}</strong>. Esperando o organizador.</span>
+      <form method="post">
+        {% csrf_token %}<button type="submit" name="acao" value="cancelar" class="botao secundario"
+                                data-confirmar="Cancelar o seu pedido de troca?">Cancelar pedido</button>
+      </form>
+    </div>
+  {% endif %}
+  {% if erro %}<div class="msg error">{{ erro }}</div>{% endif %}
+
+  <form method="post" class="cartao pedido">
+    {% csrf_token %}
+    <h2>{% if pendente %}Mudar o pedido{% else %}Pedir troca{% endif %}</h2>
+    <label for="pedido">Para onde você quer ir?</label>
+    <select name="pedido" id="pedido" required>
+      <option value="">Escolha…</option>
+      {% for linha in outras %}
+        <optgroup label="Linha {{ linha.numero }}">
+          <option value="linha:{{ linha.numero }}">➡️ Ir para a Linha {{ linha.numero }} (o organizador decide o resto)</option>
+          {% for p in linha.jogadores %}
+            <option value="troca:{{ p.id }}">🔄 Trocar de lugar com {{ p.nome }}</option>
+          {% endfor %}
+        </optgroup>
+      {% endfor %}
+    </select>
+    <label for="motivo">Por quê? <span class="suave">(opcional)</span></label>
+    <input type="text" name="motivo" id="motivo" maxlength="140" placeholder="Ex.: quero jogar com meu primo">
+    <button type="submit" class="botao largo">Enviar pedido</button>
+    <p class="suave pequeno">O organizador vê o pedido e aprova (ou não). Se aprovar, a mudança aparece na aba Linhas.
+      {% if pendente %}Enviar um pedido novo substitui o anterior.{% endif %}</p>
+  </form>
+{% endif %}
+{% endblock %}

@@ -1,7 +1,8 @@
 <nav class="menu" aria-label="Menu do organizador">
-  <a href="{% url 'votacao:painel' %}" class="{% if aba == 'semana' %}ativa{% endif %}"{% if aba == 'semana' %} aria-current="page"{% endif %}>📋 Semana</a>
-  <a href="{% url 'votacao:painel_linhas' %}" class="{% if aba == 'linhas' %}ativa{% endif %}"{% if aba == 'linhas' %} aria-current="page"{% endif %}>👥 Linhas</a>
-  <a href="{% url 'votacao:painel_cadastro' %}" class="{% if aba == 'cadastro' %}ativa{% endif %}"{% if aba == 'cadastro' %} aria-current="page"{% endif %}>🗂️ Cadastro</a>
+  <a href="{% url 'votacao:painel' %}" class="{% if aba == 'semana' %}ativa{% endif %}"{% if aba == 'semana' %} aria-current="page"{% endif %}><span class="emoji">📋 </span>Semana</a>
+  <a href="{% url 'votacao:painel_linhas' %}" class="{% if aba == 'linhas' %}ativa{% endif %}"{% if aba == 'linhas' %} aria-current="page"{% endif %}><span class="emoji">👥 </span>Linhas</a>
+  <a href="{% url 'votacao:painel_trocas' %}" class="{% if aba == 'trocas' %}ativa{% endif %}"{% if aba == 'trocas' %} aria-current="page"{% endif %}><span class="emoji">🔄 </span>Trocas{% if trocas_pendentes %}<span class="contador-menu" title="Pedidos esperando">{{ trocas_pendentes }}</span>{% endif %}</a>
+  <a href="{% url 'votacao:painel_cadastro' %}" class="{% if aba == 'cadastro' %}ativa{% endif %}"{% if aba == 'cadastro' %} aria-current="page"{% endif %}><span class="emoji">🗂️ </span>Cadastro</a>
 </nav>
 <div class="acoes-topo">
   <a class="botao-topo" href="{% url 'votacao:inicio' %}" title="Ver o site" aria-label="Ver o site">👀</a>

@@ -1,0 +1,86 @@
+{% extends "votacao/base.html" %}
+{% block titulo %}Trocas · Painel{% endblock %}
+{% block estilo %}
+  .pedido-troca .quem { display: flex; align-items: center; gap: 12px; }
+  .pedido-troca .quem .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; line-height: 1.25; }
+  .pedido-troca .quem strong { font-size: 1.05rem; }
+  .pedido-troca .motivo { margin: 10px 0 0; padding: 8px 12px; border-radius: 12px; background: var(--fundo);
+                          font-style: italic; overflow-wrap: break-word; }
+  .efeito { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .efeito li { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+               background: var(--fundo); font-size: .85rem; font-weight: 600; }
+  .efeito li::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--cor); }
+  .pedido-troca .acoes { margin-top: 12px; }
+  .pedido-troca form { margin: 0; }
+  .aviso-invalido { margin: 10px 0 0; color: var(--erro); font-weight: 600; }
+  .resolvidos { list-style: none; margin: 0; padding: 0; }
+  .resolvidos li { padding: 7px 0; border-bottom: 1px solid var(--borda); font-size: .92rem; }
+  .resolvidos li:last-child { border-bottom: 0; }
+{% endblock %}
+{% block subtitulo %}<small>Organizador</small>{% endblock %}
+{% block menu %}{% include "votacao/_menu_painel.html" with aba="trocas" %}{% endblock %}
+{% block conteudo %}
+<h1>🔄 Trocas</h1>
+<p class="suave">Pedidos de troca de linha da galera. Aprovar já muda as linhas{% if publicado %} (e a galera vê na hora){% endif %}.
+  Sortear as linhas de novo apaga os pedidos.</p>
+
+{% if not tem_linhas %}
+  <div class="cartao vazio">
+    <div class="grande">🎲</div>
+    <h2>Nenhuma linha sorteada</h2>
+    <p class="suave">Os pedidos aparecem aqui depois que você sortear e publicar as linhas.</p>
+  </div>
+{% elif not pendentes %}
+  <div class="cartao vazio">
+    <div class="grande">👌</div>
+    <h2>Nenhum pedido esperando</h2>
+    <p class="suave">{% if publicado %}Quando alguém pedir troca na aba Linhas, o pedido aparece aqui.{% else %}As linhas não estão publicadas, então a galera ainda não consegue pedir troca.{% endif %}</p>
+  </div>
+{% endif %}
+
+{% for p in pendentes %}
+  <section class="cartao pedido-troca">
+    <div class="quem">
+      {% include "votacao/_avatar.html" with p=p.jogador tamanho="medio" %}
+      <span class="info">
+        <strong>{{ p.jogador.nome }}</strong>
+        <span>{% if p.de %}Linha {{ p.de }} · {% endif %}{{ p.texto }}</span>
+        <span class="suave pequeno">pediu em {{ p.data }}</span>
+      </span>
+    </div>
+    {% if p.motivo %}<p class="motivo">“{{ p.motivo }}”</p>{% endif %}
+    {% if p.valido %}
+      <ul class="efeito" aria-label="Como ficam as linhas se aprovar">
+        {% for e in p.efeito %}
+          <li style="--cor: {{ e.cor }}">Linha {{ e.numero }}: média {{ e.antes }} → <strong>{{ e.depois }}</strong>
+            {% if e.tam_antes != e.tam_depois %}({{ e.tam_antes }} → {{ e.tam_depois }} jogadores){% endif %}</li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="aviso-invalido">⚠️ Não dá mais para aplicar: as linhas mudaram desde o pedido.</p>
+    {% endif %}
+    <div class="acoes">
+      {% if p.valido %}
+        <form method="post" action="{% url 'votacao:painel_troca_decidir' p.id %}">
+          {% csrf_token %}<button type="submit" name="acao" value="aprovar" class="botao">✅ Aprovar</button>
+        </form>
+      {% endif %}
+      <form method="post" action="{% url 'votacao:painel_troca_decidir' p.id %}">
+        {% csrf_token %}<button type="submit" name="acao" value="recusar" class="botao secundario">❌ Recusar</button>
+      </form>
+    </div>
+  </section>
+{% endfor %}
+
+{% if resolvidos %}
+  <section class="cartao">
+    <h2>Resolvidos</h2>
+    <ul class="resolvidos">
+      {% for r in resolvidos %}
+        <li>{% if r.aprovado %}✅{% else %}❌{% endif %} <strong>{{ r.jogador }}</strong>: {{ r.texto }}
+          <span class="suave pequeno">· {{ r.quando }}</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endif %}
+{% endblock %}

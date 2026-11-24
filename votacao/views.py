@@ -12,6 +12,7 @@ from django.utils.crypto import constant_time_compare
 from django.views.decorators.http import require_POST
 
 from . import armazenamento as arm
+from . import trocas
 from .notas import NAO_CONHECO, OPCOES_NOTA, formatar, formatar_curto, ler_nota, resultados
 from .sorteio import forcas, sortear
 
@@ -26,6 +27,11 @@ SESSAO_JOGADOR = "jogador"
 MINUTOS_LOGADO = 30      # depois disso (ou ao salvar as notas) precisa digitar a senha de novo
 MAX_ERROS_SENHA = 5      # tentativas erradas seguidas antes de bloquear aquele jogador
 MINUTOS_BLOQUEIO = 10
+# para onde a tela de senha manda depois de entrar (lista fechada: nada de endereço vindo de fora)
+DESTINOS_DEPOIS_DA_SENHA = {
+    "avaliar": ("votacao:avaliar", "para dar e ver as suas notas"),
+    "trocar": ("votacao:trocar", "para pedir troca de linha"),
+}
 
 
 def _visual(pessoa):
@@ -106,15 +112,93 @@ def inicio(request):
     return render(request, "votacao/inicio.html", {"pessoas": pessoas})
 
 
-def ver_linhas(request):
+def _cor_linha(numero):
+    return CORES_LINHAS[(numero - 1) % len(CORES_LINHAS)]
+
+
+def _linhas_publicadas():
+    """Linhas publicadas com quem joga esta semana (listas de jogadores), ou [] se não estiverem publicadas."""
     dados = arm.linhas()
-    linhas = []
-    if dados["publicado"]:
-        linhas, _ = _montar_linhas(dados["linhas"], [_visual(p) for p in arm.jogadores()])
+    if not dados["publicado"]:
+        return [], dados
+    linhas, _ = _montar_linhas(dados["linhas"], [_visual(p) for p in arm.jogadores()])
+    return linhas, dados
+
+
+def ver_linhas(request):
+    linhas, dados = _linhas_publicadas()
     return render(request, "votacao/linhas.html", {
-        "linhas": [{"numero": i + 1, "cor": CORES_LINHAS[i % len(CORES_LINHAS)], "jogadores": linha}
-                   for i, linha in enumerate(linhas)],
+        "linhas": [{"numero": i + 1, "cor": _cor_linha(i + 1), "jogadores": linha} for i, linha in enumerate(linhas)],
         "data": _data(dados),
+    })
+
+
+# ---------- pedidos de troca de linha (jogador) ----------
+
+def trocar_escolher(request):
+    """"Quem é você?" para pedir troca. Se já entrou com a senha há pouco, vai direto."""
+    linhas, _ = _linhas_publicadas()
+    if not linhas:
+        messages.error(request, "As linhas ainda não foram publicadas.")
+        return redirect("votacao:linhas")
+    nas_linhas = [p for linha in linhas for p in linha]
+    logado = (request.session.get(SESSAO_JOGADOR) or {}).get("id")
+    jogador = arm.buscar_jogador(logado) if logado in {p["id"] for p in nas_linhas} else None
+    if jogador and _logado_como(request, jogador):
+        return redirect("votacao:trocar", pessoa_id=jogador["id"])
+    return render(request, "votacao/trocar_escolher.html", {"pessoas": _por_nome(nas_linhas)})
+
+
+def trocar(request, pessoa_id):
+    jogador = _jogador_ou_volta(request, pessoa_id)
+    if not jogador:
+        return redirect("votacao:inicio")
+    linhas, dados = _linhas_publicadas()
+    if not linhas:
+        messages.error(request, "As linhas ainda não foram publicadas.")
+        return redirect("votacao:linhas")
+    if not _logado_como(request, jogador):  # só o próprio jogador, com a senha dele
+        return redirect(reverse("votacao:entrar", args=[pessoa_id]) + "?para=trocar")
+
+    ids = [[p["id"] for p in linha] for linha in linhas]
+    onde = {j: i + 1 for i, linha in enumerate(ids) for j in linha}
+    minha = onde.get(pessoa_id)
+    nomes = {p["id"]: p["nome"] for p in arm.pessoas()}
+    meus = [p for p in dados["pedidos"] if p["jogador"] == pessoa_id]
+    pendente = next((p for p in meus if p["status"] == "pendente"), None)
+    ultimo = next((p for p in reversed(meus) if p["status"] != "pendente"), None)
+    erro = None
+
+    if request.method == "POST" and minha:
+        if request.POST.get("acao") == "cancelar":
+            arm.cancelar_pedido(pessoa_id)
+            request.session.pop(SESSAO_JOGADOR, None)
+            messages.success(request, "Pedido de troca cancelado.")
+            return redirect("votacao:linhas")
+        escolha = request.POST.get("pedido", "")
+        motivo = " ".join(request.POST.get("motivo", "").split())[:140]
+        pedido = None
+        if escolha.startswith("troca:") and onde.get(escolha[6:]) not in (None, minha):
+            pedido = {"tipo": "troca", "com": escolha[6:]}
+        elif escolha.startswith("linha:") and escolha[6:].isdigit() and int(escolha[6:]) in range(1, len(ids) + 1) \
+                and int(escolha[6:]) != minha:
+            pedido = {"tipo": "mudar", "destino": int(escolha[6:])}
+        if pedido:
+            arm.pedir_troca(pessoa_id, motivo=motivo, **pedido)
+            request.session.pop(SESSAO_JOGADOR, None)  # sai ao enviar, como ao salvar as notas
+            messages.success(request, "🔄 Pedido enviado! O organizador vai ver e aprovar (ou não). "
+                                      "Se aprovar, a mudança aparece aqui nas linhas.")
+            return redirect("votacao:linhas")
+        erro = "Escolha para onde você quer ir."
+
+    return render(request, "votacao/trocar.html", {
+        "pessoa": _visual(jogador),
+        "minha": {"numero": minha, "cor": _cor_linha(minha)} if minha else None,
+        "outras": [{"numero": i + 1, "cor": _cor_linha(i + 1), "jogadores": linha}
+                   for i, linha in enumerate(linhas) if i + 1 != minha],
+        "pendente": trocas.descrever(pendente, nomes, ids) if pendente else "",
+        "ultimo": {"status": ultimo["status"], "texto": trocas.descrever(ultimo, nomes)} if ultimo else None,
+        "erro": erro,
     })
 
 
@@ -135,12 +219,14 @@ def ver_ranking(request):
 
 
 def entrar(request, pessoa_id):
-    """Pede a senha de 4 números do jogador antes de mostrar ou mudar as notas dele."""
+    """Pede a senha de 4 números do jogador antes de mostrar ou mudar as notas (ou pedir troca de linha)."""
     jogador = _jogador_ou_volta(request, pessoa_id)
     if not jogador:
         return redirect("votacao:inicio")
+    para = request.GET.get("para") if request.GET.get("para") in DESTINOS_DEPOIS_DA_SENHA else "avaliar"
+    destino, objetivo = DESTINOS_DEPOIS_DA_SENHA[para]
     if _logado_como(request, jogador):
-        return redirect("votacao:avaliar", pessoa_id=pessoa_id)
+        return redirect(destino, pessoa_id=pessoa_id)
 
     erro = None
     if not jogador["senha"]:
@@ -156,14 +242,17 @@ def entrar(request, pessoa_id):
             request.session[SESSAO_JOGADOR] = {
                 "id": pessoa_id, "senha": jogador["senha"], "ate": time.time() + MINUTOS_LOGADO * 60,
             }
-            return redirect("votacao:avaliar", pessoa_id=pessoa_id)
+            return redirect(destino, pessoa_id=pessoa_id)
         else:
             erros += 1
             cache.set(chave, erros, MINUTOS_BLOQUEIO * 60)
             restam = MAX_ERROS_SENHA - erros
             erro = "Senha errada. " + (f"Mais {restam} tentativa{'s' if restam > 1 else ''} antes de bloquear."
                                        if restam else f"Bloqueado por {MINUTOS_BLOQUEIO} minutos.")
-    return render(request, "votacao/entrar.html", {"pessoa": _visual(jogador), "erro": erro})
+    return render(request, "votacao/entrar.html", {
+        "pessoa": _visual(jogador), "erro": erro, "objetivo": objetivo,
+        "voltar": reverse("votacao:trocar_escolher") if para == "trocar" else reverse("votacao:inicio"),
+    })
 
 
 @require_POST
@@ -237,6 +326,12 @@ def _exige_admin(view):
     return interna
 
 
+def _render_painel(request, template, contexto):
+    """render() das telas do painel, com o número de pedidos de troca pendentes (para o menu)."""
+    contexto["trocas_pendentes"] = sum(1 for p in arm.pedidos() if p["status"] == "pendente")
+    return render(request, template, contexto)
+
+
 def painel_entrar(request):
     if request.session.get("admin"):
         return redirect("votacao:painel")
@@ -272,7 +367,7 @@ def painel(request):
     for linha in linhas:
         linha["nota_fmt"] = formatar(linha["nota"])
         linha["avaliou_data"] = _data(linha["avaliou"])
-    return render(request, "votacao/painel.html", {
+    return _render_painel(request, "votacao/painel.html", {
         "linhas": linhas,
         "ja_avaliaram": sum(1 for linha in linhas if linha["avaliou"]),
     })
@@ -281,7 +376,7 @@ def painel(request):
 @_exige_admin
 def painel_cadastro(request):
     _avisar_senhas_criadas(request)
-    return render(request, "votacao/painel_cadastro.html", {
+    return _render_painel(request, "votacao/painel_cadastro.html", {
         "cadastro": [{**_visual(p), "senha": p["senha"]} for p in arm.pessoas()],
         "total_avaliacoes": len(arm.avaliacoes()),
     })
@@ -379,7 +474,7 @@ def painel_linhas(request):
         "media_fmt": formatar(sum(forca[p["id"]] for p in linha) / len(linha)),
     } for i, linha in enumerate(linhas)]
     sem_nota = [p for p in jogadores if medias.get(p["id"]) is None]
-    return render(request, "votacao/painel_linhas.html", {
+    return _render_painel(request, "votacao/painel_linhas.html", {
         "blocos": blocos,
         "fora": [com_nota(p) for p in fora],
         "numeros": range(1, len(blocos) + 1),
@@ -461,3 +556,75 @@ def painel_linhas_despublicar(request):
     arm.despublicar_linhas()
     messages.success(request, "🙈 Linhas escondidas da página inicial. Ajuste o que quiser e publique de novo.")
     return redirect("votacao:painel_linhas")
+
+
+# ---------- administrador: pedidos de troca de linha ----------
+
+@_exige_admin
+def painel_trocas(request):
+    dados = arm.linhas()
+    jogadores = [_visual(p) for p in arm.jogadores()]
+    todos = {p["id"]: _visual(p) for p in arm.pessoas()}
+    nomes = {pid: p["nome"] for pid, p in todos.items()}
+    linhas, _ = _montar_linhas(dados["linhas"], jogadores)
+    ids = [[p["id"] for p in linha] for linha in linhas]
+    onde = {j: i + 1 for i, linha in enumerate(ids) for j in linha}
+    forca = forcas([p["id"] for p in jogadores], _medias_da_semana(jogadores))
+
+    def media(linha):
+        return formatar(sum(forca[j] for j in linha) / len(linha)) if linha else "—"
+
+    def cartao(pedido):
+        novas = trocas.aplicar(ids, pedido)
+        mudam = [i for i in range(len(ids)) if novas and sorted(ids[i]) != sorted(novas[i])]
+        return {
+            "id": pedido["id"],
+            "jogador": todos.get(pedido["jogador"], {"nome": pedido["jogador"], "iniciais": "?", "cor": "#999"}),
+            "de": onde.get(pedido["jogador"]),
+            "texto": trocas.descrever(pedido, nomes, ids),
+            "motivo": pedido.get("motivo", ""),
+            "data": _data(pedido),
+            "valido": novas is not None,
+            # como ficam as linhas envolvidas se aprovar (só o organizador vê as médias)
+            "efeito": [{"numero": i + 1, "cor": _cor_linha(i + 1), "antes": media(ids[i]), "depois": media(novas[i]),
+                        "tam_antes": len(ids[i]), "tam_depois": len(novas[i])} for i in mudam],
+        }
+
+    pendentes = [cartao(p) for p in dados["pedidos"] if p["status"] == "pendente"]
+    resolvidos = [{
+        "jogador": nomes.get(p["jogador"], p["jogador"]),
+        "texto": trocas.descrever(p, nomes),
+        "aprovado": p["status"] == "aprovado",
+        "quando": _data({"data": p["resolvido_em"]}),
+    } for p in reversed(dados["pedidos"]) if p["status"] != "pendente"][:10]
+    return _render_painel(request, "votacao/painel_trocas.html", {
+        "pendentes": pendentes,
+        "resolvidos": resolvidos,
+        "tem_linhas": bool(linhas),
+        "publicado": dados["publicado"],
+    })
+
+
+@_exige_admin
+@require_POST
+def painel_troca_decidir(request, pedido_id):
+    dados = arm.linhas()
+    pedido = next((p for p in dados["pedidos"] if p["id"] == pedido_id and p["status"] == "pendente"), None)
+    if not pedido:
+        messages.error(request, "Esse pedido não está mais pendente.")
+        return redirect("votacao:painel_trocas")
+    nome = next((p["nome"] for p in arm.pessoas() if p["id"] == pedido["jogador"]), pedido["jogador"])
+    if request.POST.get("acao") == "aprovar":
+        linhas, _ = _montar_linhas(dados["linhas"], arm.jogadores())
+        ids = [[p["id"] for p in linha] for linha in linhas]
+        novas = trocas.aplicar(ids, pedido)
+        if novas is None:
+            messages.error(request, f"Não dá mais para aplicar o pedido de {nome}: as linhas mudaram. "
+                                    "Recuse o pedido ou ajuste na aba Linhas.")
+            return redirect("votacao:painel_trocas")
+        arm.resolver_pedido(pedido_id, True, novas)
+        messages.success(request, f"✅ Pedido de {nome} aprovado. As linhas já foram atualizadas.")
+    else:
+        arm.resolver_pedido(pedido_id, False)
+        messages.success(request, f"❌ Pedido de {nome} recusado.")
+    return redirect("votacao:painel_trocas")

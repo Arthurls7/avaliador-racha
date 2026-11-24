@@ -12,8 +12,39 @@ from django.urls import reverse
 from . import armazenamento as arm
 from .notas import ler_nota, resultados
 from .sorteio import forcas, sortear, tamanhos
+from .trocas import aplicar, descrever
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+
+
+class TrocasTest(SimpleTestCase):
+    linhas = [["a", "b"], ["c", "d"], ["e"]]
+
+    def test_trocar_de_lugar(self):
+        self.assertEqual(aplicar(self.linhas, {"jogador": "a", "tipo": "troca", "com": "c"}),
+                         [["c", "b"], ["a", "d"], ["e"]])
+
+    def test_mudar_de_linha(self):
+        self.assertEqual(aplicar(self.linhas, {"jogador": "a", "tipo": "mudar", "destino": 3}),
+                         [["b"], ["c", "d"], ["e", "a"]])
+
+    def test_pedido_que_nao_da_mais(self):
+        for pedido in [
+            {"jogador": "a", "tipo": "troca", "com": "b"},      # mesma linha
+            {"jogador": "a", "tipo": "troca", "com": "zz"},     # não está nas linhas
+            {"jogador": "zz", "tipo": "troca", "com": "c"},
+            {"jogador": "a", "tipo": "mudar", "destino": 1},    # já está nela
+            {"jogador": "a", "tipo": "mudar", "destino": 4},    # não existe
+        ]:
+            self.assertIsNone(aplicar(self.linhas, pedido), pedido)
+        self.assertEqual(self.linhas, [["a", "b"], ["c", "d"], ["e"]])  # não mexe nas linhas originais
+
+    def test_descrever(self):
+        nomes = {"a": "Ana", "c": "Caio"}
+        self.assertEqual(descrever({"tipo": "troca", "com": "c"}, nomes, self.linhas), "🔄 Trocar com Caio (Linha 2)")
+        self.assertEqual(descrever({"tipo": "mudar", "destino": 3}, nomes, self.linhas), "➡️ Ir para a Linha 3")
+        # no histórico vai sem a linha de hoje (depois da troca, o outro já mudou de linha)
+        self.assertEqual(descrever({"tipo": "troca", "com": "c"}, nomes), "🔄 Trocar com Caio")
 
 
 class SorteioTest(SimpleTestCase):
@@ -453,12 +484,131 @@ class FluxoTest(SimpleTestCase):
         self.assertEqual((len(dados["linhas"]), dados["publicado"], dados["equilibrar"]), (1, False, False))
         self.assertContains(self.client.get(publica), "ainda não foram sorteadas")
 
+    # ---------- pedidos de troca de linha ----------
+
+    def sortear_e_publicar(self):
+        arm.salvar_sorteio([["ana", "bruno"], ["caio", "davi"]], 2, True)
+        arm.publicar_linhas()
+
+    def pedir(self, pessoa_id, pedido, motivo=""):
+        self.client.post(reverse("votacao:entrar", args=[pessoa_id]) + "?para=trocar", {"senha": self.senha(pessoa_id)})
+        return self.client.post(reverse("votacao:trocar", args=[pessoa_id]), {"pedido": pedido, "motivo": motivo})
+
+    def pendentes(self):
+        return [p for p in arm.pedidos() if p["status"] == "pendente"]
+
+    def test_so_pede_troca_com_linhas_publicadas(self):
+        self.assertRedirects(self.client.get(reverse("votacao:trocar_escolher")), reverse("votacao:linhas"))
+        arm.salvar_sorteio([["ana", "bruno"], ["caio", "davi"]], 2, True)  # sorteado, mas não publicado
+        self.assertRedirects(self.client.get(reverse("votacao:trocar", args=["ana"])), reverse("votacao:linhas"))
+        arm.publicar_linhas()
+        self.assertContains(self.client.get(reverse("votacao:linhas")), "Pedir troca de linha")
+        self.assertContains(self.client.get(reverse("votacao:trocar_escolher")), reverse("votacao:trocar", args=["ana"]))
+
+    def test_pedir_troca_exige_a_senha(self):
+        self.sortear_e_publicar()
+        url = reverse("votacao:trocar", args=["ana"])
+        tela_senha = reverse("votacao:entrar", args=["ana"]) + "?para=trocar"
+        self.assertRedirects(self.client.get(url), tela_senha)
+        self.assertRedirects(self.client.post(url, {"pedido": "troca:caio"}), tela_senha)
+        self.assertEqual(arm.pedidos(), [])
+        self.assertContains(self.client.get(tela_senha), "para pedir troca de linha")
+        # com a senha, a tela de senha manda de volta para o pedido
+        resposta = self.client.post(tela_senha, {"senha": self.senha("ana")})
+        self.assertRedirects(resposta, url)
+        pagina = self.client.get(url)
+        self.assertContains(pagina, 'value="troca:caio"')
+        self.assertContains(pagina, 'value="linha:2"')
+        self.assertNotContains(pagina, 'value="troca:bruno"')  # é da mesma linha
+        # "para" só aceita destinos conhecidos
+        self.client.post(reverse("votacao:sair_jogador"))
+        resposta = self.client.post(reverse("votacao:entrar", args=["ana"]) + "?para=https://golpe.example",
+                                    {"senha": self.senha("ana")})
+        self.assertRedirects(resposta, reverse("votacao:avaliar", args=["ana"]), fetch_redirect_response=False)
+
+    def test_pedido_de_troca(self):
+        self.sortear_e_publicar()
+        self.assertRedirects(self.pedir("ana", "troca:caio", "quero jogar com o Bruno... brincadeira"),
+                             reverse("votacao:linhas"))
+        [pedido] = self.pendentes()
+        self.assertEqual((pedido["jogador"], pedido["tipo"], pedido["com"], pedido["motivo"]),
+                         ("ana", "troca", "caio", "quero jogar com o Bruno... brincadeira"))
+        # enviou e saiu: para ver ou mudar, senha de novo
+        self.assertRedirects(self.client.get(reverse("votacao:trocar", args=["ana"])),
+                             reverse("votacao:entrar", args=["ana"]) + "?para=trocar")
+        # pedido inválido (alguém da mesma linha) não é salvo
+        self.assertContains(self.pedir("ana", "troca:bruno"), "Escolha para onde você quer ir.")
+        # um pedido novo substitui o pendente
+        self.pedir("ana", "linha:2")
+        [pedido] = self.pendentes()
+        self.assertEqual((pedido["tipo"], pedido["destino"]), ("mudar", 2))
+        # e dá para cancelar
+        self.pedir("ana", "")
+        self.assertContains(self.client.get(reverse("votacao:trocar", args=["ana"])), "Esperando o organizador")
+        self.client.post(reverse("votacao:trocar", args=["ana"]), {"acao": "cancelar"})
+        self.assertEqual(self.pendentes(), [])
+
+    def test_organizador_aprova_e_recusa(self):
+        self.sortear_e_publicar()
+        self.pedir("ana", "troca:caio", "por favor")
+        self.pedir("davi", "linha:1")
+        self.entrar()
+        pagina = self.client.get(reverse("votacao:painel_trocas"))
+        self.assertContains(pagina, '<span class="contador-menu" title="Pedidos esperando">2</span>', html=True)
+        self.assertContains(pagina, "🔄 Trocar com Caio (Linha 2)")
+        self.assertContains(pagina, "➡️ Ir para a Linha 1")
+        self.assertContains(pagina, "“por favor”")
+        self.assertContains(pagina, "(2 → 3 jogadores)")  # efeito de mudar o Davi de linha
+        self.assertContains(self.client.get(reverse("votacao:painel_linhas")), "2 pedidos de troca esperando")
+
+        troca, mudanca = self.pendentes()
+        resposta = self.client.post(reverse("votacao:painel_troca_decidir", args=[troca["id"]]), {"acao": "aprovar"})
+        self.assertRedirects(resposta, reverse("votacao:painel_trocas"), fetch_redirect_response=False)
+        self.assertEqual(arm.linhas()["linhas"], [["caio", "bruno"], ["ana", "davi"]])
+        self.assertTrue(arm.linhas()["publicado"])
+        self.client.post(reverse("votacao:painel_troca_decidir", args=[mudanca["id"]]), {"acao": "recusar"})
+        self.assertEqual(arm.linhas()["linhas"], [["caio", "bruno"], ["ana", "davi"]])
+        self.assertEqual([p["status"] for p in arm.pedidos()], ["aprovado", "recusado"])
+        self.assertContains(self.client.get(reverse("votacao:painel_trocas")), "Nenhum pedido esperando")
+
+        # quem pediu fica sabendo
+        self.client.post(reverse("votacao:entrar", args=["ana"]) + "?para=trocar", {"senha": self.senha("ana")})
+        self.assertContains(self.client.get(reverse("votacao:trocar", args=["ana"])), "foi aprovado ✅")
+        self.client.post(reverse("votacao:entrar", args=["davi"]) + "?para=trocar", {"senha": self.senha("davi")})
+        self.assertContains(self.client.get(reverse("votacao:trocar", args=["davi"])), "foi recusado ❌")
+
+    def test_pedido_que_nao_da_mais_para_aplicar(self):
+        self.sortear_e_publicar()
+        self.pedir("ana", "troca:caio")
+        self.entrar()
+        # o organizador colocou o Caio na linha da Ana antes de decidir
+        self.client.post(reverse("votacao:painel_linhas_ajustar"), {"linha_caio": "1"})
+        self.assertContains(self.client.get(reverse("votacao:painel_trocas")), "Não dá mais para aplicar")
+        [pedido] = self.pendentes()
+        resposta = self.client.post(reverse("votacao:painel_troca_decidir", args=[pedido["id"]]),
+                                    {"acao": "aprovar"}, follow=True)
+        self.assertContains(resposta, "Não dá mais para aplicar o pedido de Ana")
+        self.assertEqual(len(self.pendentes()), 1)
+
+    def test_sortear_de_novo_apaga_os_pedidos(self):
+        self.sortear_e_publicar()
+        self.pedir("ana", "troca:caio")
+        self.entrar()
+        self.client.post(reverse("votacao:painel_linhas_sortear"), {"por_linha": "2"})
+        self.assertEqual(arm.pedidos(), [])
+
     # ---------- painel ----------
 
     def test_painel_exige_login(self):
         self.assertRedirects(self.client.get(reverse("votacao:painel")), reverse("votacao:painel_entrar"))
         self.assertRedirects(self.client.get(reverse("votacao:painel_linhas")), reverse("votacao:painel_entrar"))
         self.assertRedirects(self.client.get(reverse("votacao:painel_cadastro")), reverse("votacao:painel_entrar"))
+        self.assertRedirects(self.client.get(reverse("votacao:painel_trocas")), reverse("votacao:painel_entrar"))
+        arm.pedir_troca("ana", "troca", com="bruno")
+        resposta = self.client.post(reverse("votacao:painel_troca_decidir", args=[arm.pedidos()[0]["id"]]),
+                                    {"acao": "aprovar"})
+        self.assertRedirects(resposta, reverse("votacao:painel_entrar"))
+        self.assertEqual(arm.pedidos()[0]["status"], "pendente")
         arm.salvar_sorteio([["ana", "bruno"]], 2, True)
         arm.publicar_linhas()
         senha_ana = self.senha("ana")
