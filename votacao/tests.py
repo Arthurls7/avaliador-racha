@@ -1,8 +1,11 @@
 import json
+import random
 import re
 import shutil
 import tempfile
+import time
 from pathlib import Path
+from unittest import mock
 
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -11,7 +14,7 @@ from django.urls import reverse
 
 from . import armazenamento as arm
 from .notas import ler_nota, resultados
-from .sorteio import forcas, sortear, tamanhos
+from .sorteio import diferenca, forcas, sortear, tamanhos, tamanhos_por_quantidade
 from .trocas import aplicar, descrever
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
@@ -54,22 +57,57 @@ class SorteioTest(SimpleTestCase):
         self.assertEqual(tamanhos(3, 5), [3])
         self.assertEqual(tamanhos(0, 5), [])
 
+    def test_tamanhos_por_numero_de_linhas(self):
+        self.assertEqual(tamanhos_por_quantidade(17, 3), [6, 6, 5])
+        self.assertEqual(tamanhos_por_quantidade(10, 4), [3, 3, 2, 2])
+        self.assertEqual(tamanhos_por_quantidade(3, 5), [1, 1, 1])  # mais linhas que gente: uma por pessoa
+        self.assertEqual(tamanhos_por_quantidade(0, 3), [])
+
     def test_todo_mundo_em_uma_linha_so(self):
         ids = [f"j{i}" for i in range(17)]
-        linhas = sortear(ids, {j: i % 5 for i, j in enumerate(ids)}, 5)
-        self.assertEqual(sorted(sum(linhas, [])), sorted(ids))
-        self.assertEqual(sorted(len(l) for l in linhas), [2, 5, 5, 5])
+        forca = {j: i % 5 for i, j in enumerate(ids)}
+        for tams in [tamanhos(17, 5), tamanhos_por_quantidade(17, 3)]:
+            linhas, _ = sortear(ids, forca, tams)
+            self.assertEqual(sorted(sum(linhas, [])), sorted(ids))
+            self.assertEqual([len(l) for l in linhas], tams)
 
-    def test_equilibra_pelas_notas(self):
+    def test_limite_zero_e_o_mais_equilibrado(self):
         forca = {"a": 5, "b": 5, "c": 5, "d": 5, "e": 1, "f": 1, "g": 1, "h": 1}
         for _ in range(5):
-            linhas = sortear(list(forca), forca, 4)
+            linhas, dif = sortear(list(forca), forca, [4, 4], diferenca_max=0)
             self.assertEqual([sum(forca[j] for j in l) / 4 for l in linhas], [3, 3])
+            self.assertEqual(dif, 0)
+
+    def test_limite_e_respeitado(self):
+        aleatorio = random.Random(7)
+        ids = [f"j{i}" for i in range(20)]
+        forca = {j: round(aleatorio.uniform(0.5, 5), 2) for j in ids}
+        for limite in [0.1, 0.3, 1.0]:
+            for _ in range(10):
+                linhas, dif = sortear(ids, forca, tamanhos(20, 5), diferenca_max=limite)
+                self.assertLessEqual(dif, limite + 1e-9)
+                self.assertAlmostEqual(dif, diferenca(linhas, forca))
+
+    def test_limite_maior_da_mais_sorte(self):
+        forca = {"a": 5, "b": 5, "c": 5, "d": 5, "e": 1, "f": 1, "g": 1, "h": 1}
+        difs = [sortear(list(forca), forca, [4, 4], diferenca_max=5)[1] for _ in range(30)]
+        self.assertTrue(any(d > 0 for d in difs))  # com limite folgado, nem sempre sai o equilíbrio perfeito
+
+    def test_limite_impossivel_devolve_o_mais_equilibrado(self):
+        linhas, dif = sortear(["forte", "fraco"], {"forte": 5, "fraco": 0}, [1, 1], diferenca_max=0.5)
+        self.assertEqual(dif, 5)  # só há um jeito: quem chamou avisa que passou do limite
 
     def test_sortear_de_novo_muda(self):
         ids = [f"j{i}" for i in range(10)]
-        sorteios = {tuple(sorted(tuple(sorted(l)) for l in sortear(ids, dict.fromkeys(ids, 3), 5))) for _ in range(10)}
+        sorteios = {tuple(sorted(tuple(sorted(l)) for l in sortear(ids, dict.fromkeys(ids, 3), [5, 5])[0]))
+                    for _ in range(10)}
         self.assertGreater(len(sorteios), 1)
+
+    def test_sorteio_puro(self):
+        forca = {"a": 5, "b": 5, "c": 1, "d": 1}
+        linhas, dif = sortear(list(forca), forca, [2, 2], equilibrar=False)
+        self.assertEqual(sorted(sum(linhas, [])), ["a", "b", "c", "d"])
+        self.assertAlmostEqual(dif, diferenca(linhas, forca))
 
     def test_quem_nao_tem_nota_conta_como_media_geral(self):
         self.assertEqual(forcas(["a", "b", "c"], {"a": 4, "b": 2, "c": None}), {"a": 4, "b": 2, "c": 3})
@@ -342,24 +380,40 @@ class FluxoTest(SimpleTestCase):
         cache.clear()  # passaram os 10 minutos
         self.logar("ana")
 
-    def test_salvar_ou_sair_pede_a_senha_de_novo(self):
+    def test_salvar_nao_desconecta_e_sair_desconecta(self):
         url = reverse("votacao:avaliar", args=["ana"])
         self.logar("ana")
         self.assertRedirects(self.client.get(reverse("votacao:entrar", args=["ana"])), url)  # já entrou
-        self.client.post(url, {"nota_bruno": "1", "nota_caio": "2", "nota_davi": "3"})
-        self.assertRedirects(self.client.get(url), reverse("votacao:entrar", args=["ana"]))
-        self.logar("ana")
-        self.assertEqual(self.client.get(url).status_code, 200)
+        resposta = self.client.post(url, {"nota_bruno": "1", "nota_caio": "2", "nota_davi": "3"}, follow=True)
+        self.assertContains(resposta, "Você continua conectado")
+        self.assertEqual(self.client.get(url).status_code, 200)  # sem pedir a senha de novo
         self.assertRedirects(self.client.post(reverse("votacao:sair_jogador")), reverse("votacao:inicio"))
         self.assertRedirects(self.client.get(url), reverse("votacao:entrar", args=["ana"]))
 
-    def test_entrada_vale_30_minutos(self):
+    def test_conexao_dura_14_dias_e_renova_a_cada_uso(self):
         self.logar("ana")
+        quatorze_dias = 14 * 24 * 3600
+        self.assertAlmostEqual(self.client.session["jogador"]["ate"], time.time() + quatorze_dias, delta=60)
+        # faltando 1 hora, usar renova por mais 14 dias
+        sessao = self.client.session
+        sessao["jogador"]["ate"] = time.time() + 3600
+        sessao.save()
+        self.assertEqual(self.client.get(reverse("votacao:avaliar", args=["ana"])).status_code, 200)
+        self.assertAlmostEqual(self.client.session["jogador"]["ate"], time.time() + quatorze_dias, delta=60)
+        # vencida: senha de novo
         sessao = self.client.session
         sessao["jogador"]["ate"] = 0
         sessao.save()
         self.assertRedirects(self.client.get(reverse("votacao:avaliar", args=["ana"])),
                              reverse("votacao:entrar", args=["ana"]))
+
+    def test_inicio_mostra_quem_esta_conectado(self):
+        self.assertNotContains(self.client.get(reverse("votacao:inicio")), "Conectado como")
+        self.logar("ana")
+        pagina = self.client.get(reverse("votacao:inicio"))
+        self.assertContains(pagina, "Conectado como <strong>Ana</strong>")
+        self.assertContains(pagina, '<span class="etiqueta-voce">você</span>', count=1)
+        self.assertContains(pagina, f'action="{reverse("votacao:sair_jogador")}"')
 
     def test_organizador_troca_a_senha(self):
         self.logar("ana")
@@ -425,6 +479,39 @@ class FluxoTest(SimpleTestCase):
         self.assertContains(resposta, "Ainda sem nota")
         self.assertContains(self.client.get(reverse("votacao:ranking")), "🥇", count=1)
 
+    def test_sorteio_por_numero_de_linhas_e_limite(self):
+        self.entrar()
+        arm.adicionar_pessoas(["Eva"])  # 5 jogadores
+        sortear = reverse("votacao:painel_linhas_sortear")
+        resposta = self.client.post(sortear, {"divisao": "num_linhas", "num_linhas": "2", "por_linha": "4",
+                                              "equilibrar": "on", "diferenca_max": "0,5"}, follow=True)
+        dados = arm.linhas()
+        self.assertEqual([len(l) for l in dados["linhas"]], [3, 2])
+        self.assertEqual((dados["divisao"], dados["num_linhas"], dados["diferenca_max"]), ("num_linhas", 2, 0.5))
+        self.assertContains(resposta, "2 linha(s) sorteada(s) (3, 2 jogadores)")
+        self.assertContains(resposta, "(limite 0,50)")
+        # o painel lembra as escolhas
+        self.assertContains(resposta, 'name="divisao" value="num_linhas" checked')
+        self.assertContains(resposta, 'name="diferenca_max" id="diferenca_max" min="0" max="2" step="0.1" value="0.5"')
+        self.assertContains(resposta, "Diferença entre a linha mais forte e a mais fraca agora")
+        # mais linhas que gente: uma pessoa por linha
+        self.client.post(sortear, {"divisao": "num_linhas", "num_linhas": "50"})
+        self.assertEqual([len(l) for l in arm.linhas()["linhas"]], [1, 1, 1, 1, 1])
+        # jogadores por linha continua funcionando
+        self.client.post(sortear, {"divisao": "por_linha", "por_linha": "2"})
+        self.assertEqual([len(l) for l in arm.linhas()["linhas"]], [2, 2, 1])
+
+    def test_aviso_quando_o_limite_nao_cabe(self):
+        self.entrar()
+        arm.adicionar_pessoas(["Ana", "Bruno"], somente_estes=True)
+        arm.salvar_avaliacao("ana", {"notas": {"bruno": 0}})
+        arm.salvar_avaliacao("bruno", {"notas": {"ana": 5}})
+        resposta = self.client.post(reverse("votacao:painel_linhas_sortear"),
+                                    {"divisao": "num_linhas", "num_linhas": "2", "equilibrar": "on",
+                                     "diferenca_max": "0.5"}, follow=True)
+        self.assertContains(resposta, "Não deu para ficar dentro do limite de 0,50")
+        self.assertContains(resposta, "o mais equilibrado que deu foi 5,00")
+
     def test_linhas(self):
         self.entrar()
         publica = reverse("votacao:linhas")
@@ -484,82 +571,91 @@ class FluxoTest(SimpleTestCase):
         self.assertEqual((len(dados["linhas"]), dados["publicado"], dados["equilibrar"]), (1, False, False))
         self.assertContains(self.client.get(publica), "ainda não foram sorteadas")
 
-    # ---------- pedidos de troca de linha ----------
+    # ---------- sugestões de troca de linha (sem senha, em fila) ----------
 
     def sortear_e_publicar(self):
         arm.salvar_sorteio([["ana", "bruno"], ["caio", "davi"]], 2, True)
         arm.publicar_linhas()
 
-    def pedir(self, pessoa_id, pedido, motivo=""):
-        self.client.post(reverse("votacao:entrar", args=[pessoa_id]) + "?para=trocar", {"senha": self.senha(pessoa_id)})
-        return self.client.post(reverse("votacao:trocar", args=[pessoa_id]), {"pedido": pedido, "motivo": motivo})
+    def sugerir(self, jogador, pedido, motivo="", por="", follow=False):
+        return self.client.post(reverse("votacao:sugerir_troca"),
+                                {"jogador": jogador, "pedido": pedido, "motivo": motivo, "por": por}, follow=follow)
 
     def pendentes(self):
         return [p for p in arm.pedidos() if p["status"] == "pendente"]
 
-    def test_so_pede_troca_com_linhas_publicadas(self):
-        self.assertRedirects(self.client.get(reverse("votacao:trocar_escolher")), reverse("votacao:linhas"))
+    def test_so_sugere_com_linhas_publicadas(self):
+        url = reverse("votacao:sugerir_troca")
+        self.assertRedirects(self.client.get(url), reverse("votacao:linhas"))
         arm.salvar_sorteio([["ana", "bruno"], ["caio", "davi"]], 2, True)  # sorteado, mas não publicado
-        self.assertRedirects(self.client.get(reverse("votacao:trocar", args=["ana"])), reverse("votacao:linhas"))
+        self.assertRedirects(self.client.get(url), reverse("votacao:linhas"))
         arm.publicar_linhas()
-        self.assertContains(self.client.get(reverse("votacao:linhas")), "Pedir troca de linha")
-        self.assertContains(self.client.get(reverse("votacao:trocar_escolher")), reverse("votacao:trocar", args=["ana"]))
-
-    def test_pedir_troca_exige_a_senha(self):
-        self.sortear_e_publicar()
-        url = reverse("votacao:trocar", args=["ana"])
-        tela_senha = reverse("votacao:entrar", args=["ana"]) + "?para=trocar"
-        self.assertRedirects(self.client.get(url), tela_senha)
-        self.assertRedirects(self.client.post(url, {"pedido": "troca:caio"}), tela_senha)
-        self.assertEqual(arm.pedidos(), [])
-        self.assertContains(self.client.get(tela_senha), "para pedir troca de linha")
-        # com a senha, a tela de senha manda de volta para o pedido
-        resposta = self.client.post(tela_senha, {"senha": self.senha("ana")})
-        self.assertRedirects(resposta, url)
+        self.assertContains(self.client.get(reverse("votacao:linhas")), "Sugerir troca de linha")
         pagina = self.client.get(url)
         self.assertContains(pagina, 'value="troca:caio"')
         self.assertContains(pagina, 'value="linha:2"')
-        self.assertNotContains(pagina, 'value="troca:bruno"')  # é da mesma linha
-        # "para" só aceita destinos conhecidos
-        self.client.post(reverse("votacao:sair_jogador"))
-        resposta = self.client.post(reverse("votacao:entrar", args=["ana"]) + "?para=https://golpe.example",
-                                    {"senha": self.senha("ana")})
-        self.assertRedirects(resposta, reverse("votacao:avaliar", args=["ana"]), fetch_redirect_response=False)
 
-    def test_pedido_de_troca(self):
+    def test_qualquer_um_sugere_sem_senha_inclusive_para_outros(self):
         self.sortear_e_publicar()
-        self.assertRedirects(self.pedir("ana", "troca:caio", "quero jogar com o Bruno... brincadeira"),
-                             reverse("votacao:linhas"))
-        [pedido] = self.pendentes()
-        self.assertEqual((pedido["jogador"], pedido["tipo"], pedido["com"], pedido["motivo"]),
-                         ("ana", "troca", "caio", "quero jogar com o Bruno... brincadeira"))
-        # enviou e saiu: para ver ou mudar, senha de novo
-        self.assertRedirects(self.client.get(reverse("votacao:trocar", args=["ana"])),
-                             reverse("votacao:entrar", args=["ana"]) + "?para=trocar")
-        # pedido inválido (alguém da mesma linha) não é salvo
-        self.assertContains(self.pedir("ana", "troca:bruno"), "Escolha para onde você quer ir.")
-        # um pedido novo substitui o pendente
-        self.pedir("ana", "linha:2")
-        [pedido] = self.pendentes()
-        self.assertEqual((pedido["tipo"], pedido["destino"]), ("mudar", 2))
-        # e dá para cancelar
-        self.pedir("ana", "")
-        self.assertContains(self.client.get(reverse("votacao:trocar", args=["ana"])), "Esperando o organizador")
-        self.client.post(reverse("votacao:trocar", args=["ana"]), {"acao": "cancelar"})
-        self.assertEqual(self.pendentes(), [])
+        resposta = self.sugerir("ana", "troca:caio", "os dois são primos", por="bruno")
+        self.assertRedirects(resposta, reverse("votacao:linhas"))
+        self.sugerir("davi", "linha:1")  # sugestão para outra pessoa, sem dizer quem sugeriu
+        primeira, segunda = self.pendentes()
+        self.assertEqual((primeira["jogador"], primeira["tipo"], primeira["com"], primeira["motivo"], primeira["por"]),
+                         ("ana", "troca", "caio", "os dois são primos", "bruno"))
+        self.assertEqual((segunda["jogador"], segunda["tipo"], segunda["destino"], segunda["por"]),
+                         ("davi", "mudar", 1, None))
 
-    def test_organizador_aprova_e_recusa(self):
+    def test_sugestao_invalida(self):
         self.sortear_e_publicar()
-        self.pedir("ana", "troca:caio", "por favor")
-        self.pedir("davi", "linha:1")
+        self.assertContains(self.sugerir("ana", "troca:bruno"), "Escolha para onde Ana vai")  # mesma linha
+        self.assertContains(self.sugerir("ana", "linha:1"), "Escolha para onde Ana vai")       # já está nela
+        self.assertContains(self.sugerir("ana", "linha:9"), "Escolha para onde Ana vai")       # não existe
+        self.assertContains(self.sugerir("ninguem", "linha:2"), "Escolha quem vai mudar de linha.")
+        resposta = self.sugerir("ana", "troca:caio", por="intruso")  # "por" fora da lista é ignorado
+        self.assertRedirects(resposta, reverse("votacao:linhas"))
+        self.assertEqual([p["por"] for p in self.pendentes()], [None])
+
+    def test_fila_nao_substitui_e_junta_repetidas(self):
+        self.sortear_e_publicar()
+        self.sugerir("ana", "troca:caio")
+        self.sugerir("ana", "linha:2")
+        resposta = self.sugerir("caio", "troca:ana", follow=True)  # a mesma troca, na ordem inversa
+        self.assertContains(resposta, "Essa sugestão já está na fila")
+        self.assertEqual([(p["jogador"], p["tipo"]) for p in self.pendentes()], [("ana", "troca"), ("ana", "mudar")])
+
+    def test_fila_tem_teto(self):
+        self.sortear_e_publicar()
+        with mock.patch.object(arm, "MAX_PEDIDOS_NA_FILA", 2):
+            self.sugerir("ana", "linha:2")
+            self.sugerir("bruno", "linha:2")
+            resposta = self.sugerir("caio", "linha:1", follow=True)
+        self.assertContains(resposta, "A fila de sugestões está cheia")
+        self.assertEqual(len(self.pendentes()), 2)
+
+    def test_quem_sugere_vem_preenchido_se_estiver_conectado(self):
+        self.sortear_e_publicar()
+        sem_ninguem = self.client.get(reverse("votacao:sugerir_troca")).content.decode()
+        self.assertNotRegex(sem_ninguem, r'<option value="[a-z-]+" selected>')  # nada pré-escolhido
+        self.logar("bruno")
+        pagina = self.client.get(reverse("votacao:sugerir_troca")).content.decode()
+        self.assertRegex(pagina, r'<option value="bruno" selected>\s*Bruno</option>')
+
+    def test_organizador_aprova_e_recusa_na_ordem_da_fila(self):
+        self.sortear_e_publicar()
+        self.sugerir("ana", "troca:caio", "por favor", por="bruno")
+        self.sugerir("davi", "linha:1")
         self.entrar()
         pagina = self.client.get(reverse("votacao:painel_trocas"))
-        self.assertContains(pagina, '<span class="contador-menu" title="Pedidos esperando">2</span>', html=True)
+        self.assertContains(pagina, '<span class="contador-menu" title="Sugestões de troca na fila">2</span>', html=True)
+        texto = pagina.content.decode()
+        self.assertLess(texto.index("1º · Ana"), texto.index("2º · Davi"))
         self.assertContains(pagina, "🔄 Trocar com Caio (Linha 2)")
-        self.assertContains(pagina, "➡️ Ir para a Linha 1")
+        self.assertContains(pagina, "sugerido por Bruno")
+        self.assertContains(pagina, "sugestão sem nome")
         self.assertContains(pagina, "“por favor”")
         self.assertContains(pagina, "(2 → 3 jogadores)")  # efeito de mudar o Davi de linha
-        self.assertContains(self.client.get(reverse("votacao:painel_linhas")), "2 pedidos de troca esperando")
+        self.assertContains(self.client.get(reverse("votacao:painel_linhas")), "2 sugestões de troca na fila")
 
         troca, mudanca = self.pendentes()
         resposta = self.client.post(reverse("votacao:painel_troca_decidir", args=[troca["id"]]), {"acao": "aprovar"})
@@ -569,17 +665,11 @@ class FluxoTest(SimpleTestCase):
         self.client.post(reverse("votacao:painel_troca_decidir", args=[mudanca["id"]]), {"acao": "recusar"})
         self.assertEqual(arm.linhas()["linhas"], [["caio", "bruno"], ["ana", "davi"]])
         self.assertEqual([p["status"] for p in arm.pedidos()], ["aprovado", "recusado"])
-        self.assertContains(self.client.get(reverse("votacao:painel_trocas")), "Nenhum pedido esperando")
+        self.assertContains(self.client.get(reverse("votacao:painel_trocas")), "Nenhuma sugestão na fila")
 
-        # quem pediu fica sabendo
-        self.client.post(reverse("votacao:entrar", args=["ana"]) + "?para=trocar", {"senha": self.senha("ana")})
-        self.assertContains(self.client.get(reverse("votacao:trocar", args=["ana"])), "foi aprovado ✅")
-        self.client.post(reverse("votacao:entrar", args=["davi"]) + "?para=trocar", {"senha": self.senha("davi")})
-        self.assertContains(self.client.get(reverse("votacao:trocar", args=["davi"])), "foi recusado ❌")
-
-    def test_pedido_que_nao_da_mais_para_aplicar(self):
+    def test_sugestao_que_nao_da_mais_para_aplicar(self):
         self.sortear_e_publicar()
-        self.pedir("ana", "troca:caio")
+        self.sugerir("ana", "troca:caio")
         self.entrar()
         # o organizador colocou o Caio na linha da Ana antes de decidir
         self.client.post(reverse("votacao:painel_linhas_ajustar"), {"linha_caio": "1"})
@@ -590,9 +680,9 @@ class FluxoTest(SimpleTestCase):
         self.assertContains(resposta, "Não dá mais para aplicar o pedido de Ana")
         self.assertEqual(len(self.pendentes()), 1)
 
-    def test_sortear_de_novo_apaga_os_pedidos(self):
+    def test_sortear_de_novo_apaga_a_fila(self):
         self.sortear_e_publicar()
-        self.pedir("ana", "troca:caio")
+        self.sugerir("ana", "troca:caio")
         self.entrar()
         self.client.post(reverse("votacao:painel_linhas_sortear"), {"por_linha": "2"})
         self.assertEqual(arm.pedidos(), [])

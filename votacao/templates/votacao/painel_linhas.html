@@ -1,9 +1,21 @@
 {% extends "votacao/base.html" %}
 {% block titulo %}Linhas · Painel{% endblock %}
 {% block estilo %}
-  .tamanho { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
-  .tamanho input { width: 5.5em; padding: 10px 12px; font: inherit; font-weight: 800; text-align: center;
-                   border: 2px solid var(--borda); border-radius: 12px; }
+  .divisao { border: 0; padding: 0; margin: 0 0 6px; min-width: 0; }
+  .divisao legend { padding: 0; margin-bottom: 8px; font-weight: 700; }
+  .opcao-divisao { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 8px 10px 8px 12px;
+                   border: 2px solid var(--borda); border-radius: 14px; cursor: pointer; }
+  .opcao-divisao:has(input[type=radio]:checked) { border-color: var(--verde); background: var(--verde-claro); }
+  .opcao-divisao span { flex: 1; }
+  .opcao-divisao input[type=radio] { width: 18px; height: 18px; margin: 0; accent-color: var(--verde); flex: none; }
+  .opcao-divisao input[type=number] { width: 4.6em; padding: 8px 10px; font: inherit; font-weight: 800; text-align: center;
+                                      border: 2px solid var(--borda); border-radius: 10px; background: #fff; }
+  .previa { margin: 0; min-height: 1.3em; }
+  .limite { margin: 0 0 16px; transition: opacity .15s; }
+  .limite.desligado { opacity: .4; }
+  .limite input[type=range] { display: block; width: 100%; margin: 10px 0 2px; accent-color: var(--verde); }
+  .limite .extremos { display: flex; justify-content: space-between; gap: 8px; }
+  .limite p { margin: 6px 0 0; }
   .status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
   .status form { margin: 0; }
   .cabeca { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
@@ -17,23 +29,43 @@
 {% block conteudo %}
 <h1>👥 Linhas</h1>
 {% if trocas_pendentes %}
-  <div class="msg info">🔄 {{ trocas_pendentes }} pedido{{ trocas_pendentes|pluralize }} de troca esperando:
+  <div class="msg info">🔄 {{ trocas_pendentes }} sugest{{ trocas_pendentes|pluralize:"ão,ões" }} de troca na fila:
     <a href="{% url 'votacao:painel_trocas' %}">ver na aba Trocas</a>.</div>
 {% endif %}
 <section class="cartao">
   <h2>🎲 Sortear linhas</h2>
   {% if total %}
-    <form method="post" action="{% url 'votacao:painel_linhas_sortear' %}">
+    <form method="post" action="{% url 'votacao:painel_linhas_sortear' %}" id="form-sorteio" data-total="{{ total }}">
       {% csrf_token %}
       <p class="suave">{{ total }} jogador{{ total|pluralize:"es" }} na lista desta semana.</p>
-      <label class="tamanho">Jogadores por linha
-        <input type="number" name="por_linha" value="{{ por_linha }}" min="1" max="50" inputmode="numeric" required>
-      </label>
+      <fieldset class="divisao">
+        <legend>Como dividir</legend>
+        <label class="opcao-divisao">
+          <input type="radio" name="divisao" value="por_linha"{% if divisao != "num_linhas" %} checked{% endif %}>
+          <span>Jogadores por linha</span>
+          <input type="number" name="por_linha" value="{{ por_linha }}" min="1" max="50" inputmode="numeric"
+                 aria-label="Jogadores por linha">
+        </label>
+        <label class="opcao-divisao">
+          <input type="radio" name="divisao" value="num_linhas"{% if divisao == "num_linhas" %} checked{% endif %}>
+          <span>Número de linhas</span>
+          <input type="number" name="num_linhas" value="{{ num_linhas }}" min="1" max="{{ total }}" inputmode="numeric"
+                 aria-label="Número de linhas">
+        </label>
+        <p class="suave pequeno previa" id="previa" aria-live="polite"></p>
+      </fieldset>
       <label class="opcao-check">
-        <input type="checkbox" name="equilibrar"{% if equilibrar %} checked{% endif %}>
-        <span>Equilibrar pelas notas (as linhas ficam com médias parecidas; desmarcado = sorteio puro)</span>
+        <input type="checkbox" name="equilibrar" id="equilibrar"{% if equilibrar %} checked{% endif %}>
+        <span>Equilibrar pelas notas (desmarcado = sorteio puro, só sorte)</span>
       </label>
-      <button type="submit" class="botao largo"{% if blocos %} data-confirmar="Sortear de novo? As linhas atuais serão substituídas{% if trocas_pendentes %} e os pedidos de troca serão apagados{% endif %}."{% endif %}>
+      <div class="limite" id="caixa-limite">
+        <label for="diferenca_max">Diferença máxima entre as linhas: <strong id="valor-limite"></strong></label>
+        <input type="range" name="diferenca_max" id="diferenca_max" min="0" max="2" step="0.1" value="{{ diferenca_max }}">
+        <div class="extremos suave pequeno"><span>⚖️ mais equilíbrio</span><span>mais sorte 🎲</span></div>
+        <p class="suave pequeno">É a diferença entre a média da linha mais forte e a da mais fraca. Quanto maior,
+          mais o sorteio varia de uma vez para outra.</p>
+      </div>
+      <button type="submit" class="botao largo"{% if blocos %} data-confirmar="Sortear de novo? As linhas atuais serão substituídas{% if trocas_pendentes %} e a fila de sugestões de troca será apagada{% endif %}."{% endif %}>
         🎲 {% if blocos %}Sortear de novo{% else %}Sortear{% endif %}
       </button>
     </form>
@@ -59,6 +91,9 @@
     </div>
   {% endif %}
 
+  {% if diferenca_atual %}
+    <p class="suave">⚖️ Diferença entre a linha mais forte e a mais fraca agora: <strong>{{ diferenca_atual }}</strong></p>
+  {% endif %}
   <p class="suave pequeno">Para ajustar, troque a linha de alguém no seletor ao lado do nome (salva na hora).
     {% if media_geral %}Quem ainda não tem nota conta como {{ media_geral }} (a média geral) no equilíbrio.{% endif %}</p>
 
@@ -106,5 +141,40 @@
 <script>
   // trocar a linha de alguém salva na hora
   document.querySelectorAll("#form-linhas select").forEach(s => s.addEventListener("change", () => s.form.submit()));
+
+  // formulário do sorteio: prévia dos tamanhos, valor do limite e limite apagado sem "Equilibrar"
+  (function () {
+    const form = document.getElementById("form-sorteio");
+    if (!form) return;
+    const total = Number(form.dataset.total);
+    const porLinha = form.elements.por_linha, numLinhas = form.elements.num_linhas;
+    const equilibrar = form.elements.equilibrar, limite = form.elements.diferenca_max;
+    const limitar = (v, min, max) => Math.min(Math.max(Math.round(Number(v)) || min, min), max);
+
+    function tamanhos() {  // mesma conta do servidor (sorteio.py)
+      if (form.elements.divisao.value === "num_linhas") {
+        const q = limitar(numLinhas.value, 1, total), base = Math.floor(total / q), sobra = total % q;
+        return Array.from({ length: q }, (_, i) => base + (i < sobra ? 1 : 0));
+      }
+      const k = limitar(porLinha.value, 1, 50), q = Math.ceil(total / k);
+      return Array.from({ length: q }, (_, i) => (i < q - 1 ? k : total - k * (q - 1)));
+    }
+    function atualizar() {
+      const t = tamanhos();
+      document.getElementById("previa").textContent =
+        `Vai ficar: ${t.length} linha${t.length > 1 ? "s" : ""} (${t.join(", ")} jogadores)`;
+      const v = Number(limite.value);
+      document.getElementById("valor-limite").textContent =
+        v === 0 ? "0 (o mais equilibrado possível)" : v.toFixed(1).replace(".", ",");
+      limite.disabled = !equilibrar.checked;
+      document.getElementById("caixa-limite").classList.toggle("desligado", !equilibrar.checked);
+    }
+    // mexer no número já escolhe aquela forma de dividir
+    porLinha.addEventListener("focus", () => { form.elements.divisao.value = "por_linha"; atualizar(); });
+    numLinhas.addEventListener("focus", () => { form.elements.divisao.value = "num_linhas"; atualizar(); });
+    form.addEventListener("input", atualizar);
+    form.addEventListener("change", atualizar);
+    atualizar();
+  })();
 </script>
 {% endblock %}

@@ -21,8 +21,9 @@
 {% block menu %}{% include "votacao/_menu_painel.html" with aba="trocas" %}{% endblock %}
 {% block conteudo %}
 <h1>🔄 Trocas</h1>
-<p class="suave">Pedidos de troca de linha da galera. Aprovar já muda as linhas{% if publicado %} (e a galera vê na hora){% endif %}.
-  Sortear as linhas de novo apaga os pedidos.</p>
+<p class="suave">Fila de sugestões de troca, da mais antiga para a mais nova. Qualquer um sugere, sem senha, então
+  "sugerido por" é só informativo. Aprovar já muda as linhas{% if publicado %} (e a galera vê na hora){% endif %}.
+  Sortear as linhas de novo apaga a fila.</p>
 
 {% if not tem_linhas %}
   <div class="cartao vazio">
@@ -33,8 +34,8 @@
 {% elif not pendentes %}
   <div class="cartao vazio">
     <div class="grande">👌</div>
-    <h2>Nenhum pedido esperando</h2>
-    <p class="suave">{% if publicado %}Quando alguém pedir troca na aba Linhas, o pedido aparece aqui.{% else %}As linhas não estão publicadas, então a galera ainda não consegue pedir troca.{% endif %}</p>
+    <h2>Nenhuma sugestão na fila</h2>
+    <p class="suave">{% if publicado %}Quando alguém sugerir uma troca na aba Linhas, ela aparece aqui.{% else %}As linhas não estão publicadas, então a galera ainda não consegue sugerir trocas.{% endif %}</p>
   </div>
 {% endif %}
 
@@ -43,9 +44,9 @@
     <div class="quem">
       {% include "votacao/_avatar.html" with p=p.jogador tamanho="medio" %}
       <span class="info">
-        <strong>{{ p.jogador.nome }}</strong>
+        <strong>{{ forloop.counter }}º · {{ p.jogador.nome }}</strong>
         <span>{% if p.de %}Linha {{ p.de }} · {% endif %}{{ p.texto }}</span>
-        <span class="suave pequeno">pediu em {{ p.data }}</span>
+        <span class="suave pequeno">{% if p.por %}sugerido por {{ p.por }}{% else %}sugestão sem nome{% endif %} · {{ p.data }}</span>
       </span>
     </div>
     {% if p.motivo %}<p class="motivo">“{{ p.motivo }}”</p>{% endif %}

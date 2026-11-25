@@ -12,7 +12,7 @@
   <h1>👥 Linhas</h1>
   <p class="suave">Sorteadas em {{ data }}. Bom jogo! ⚽</p>
   <div class="acoes pedir-troca">
-    <a class="botao secundario" href="{% url 'votacao:trocar_escolher' %}">🔄 Pedir troca de linha</a>
+    <a class="botao secundario" href="{% url 'votacao:sugerir_troca' %}">🔄 Sugerir troca de linha</a>
   </div>
   <div class="linhas">
     {% for linha in linhas %}

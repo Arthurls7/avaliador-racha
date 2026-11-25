@@ -13,12 +13,17 @@ dados/avaliacoes.json
                                              "data": "..."}, ...}}
 
 dados/linhas.json
-    {"linhas": [["<id>", ...], ...], "publicado": false, "data": "...", "por_linha": 5, "equilibrar": true,
+    {"linhas": [["<id>", ...], ...], "publicado": false, "data": "...",
+     "divisao": "por_linha" | "num_linhas", "por_linha": 5, "num_linhas": 3, "equilibrar": true,
+     "diferenca_max": 0.3, "diferenca": 0.12,
      "pedidos": [{"id": "a1b2c3d4", "jogador": "<id>", "tipo": "troca" | "mudar", "com": "<id>" | null,
-                  "destino": 2 | null, "motivo": "...", "data": "...",
+                  "destino": 2 | null, "motivo": "...", "por": "<id de quem sugeriu>" | null, "data": "...",
                   "status": "pendente" | "aprovado" | "recusado", "resolvido_em": "..." | null}, ...]}
     As linhas (times) sorteadas; só aparecem na página inicial depois de publicadas.
-    "pedidos" são os pedidos de troca de linha dos jogadores, que o organizador aprova ou recusa.
+    "divisao", "por_linha", "num_linhas", "equilibrar" e "diferenca_max" são as escolhas do último sorteio
+    (o painel lembra delas); "diferenca" é a diferença entre a linha mais forte e a mais fraca naquele sorteio.
+    "pedidos" é a fila de sugestões de troca de linha (qualquer um sugere, sem senha, para qualquer jogador);
+    o organizador aprova ou recusa, na ordem em que chegaram.
 
 As fotos ficam em MEDIA_ROOT/fotos/.
 """
@@ -55,7 +60,8 @@ TAMANHO_MAX_FOTO = 10 * 1024 * 1024
 _PADRAO = {
     LOGINS: {"admin": None, "pessoas": []},
     AVALIACOES: {"avaliacoes": {}},
-    LINHAS: {"linhas": [], "publicado": False, "data": None, "por_linha": 5, "equilibrar": True, "pedidos": []},
+    LINHAS: {"linhas": [], "publicado": False, "data": None, "divisao": "por_linha", "por_linha": 5, "num_linhas": 2,
+             "equilibrar": True, "diferenca_max": 0.3, "pedidos": []},
 }
 _trava_thread = threading.Lock()
 
@@ -351,11 +357,14 @@ def linhas():
     return {**_PADRAO[LINHAS], **ler(LINHAS)}
 
 
-def salvar_sorteio(novas_linhas, por_linha, equilibrar):
-    """Sorteio novo: fica escondido da galera até ser publicado. Os pedidos de troca antigos são apagados."""
+def salvar_sorteio(novas_linhas, por_linha, equilibrar, **escolhas):
+    """Sorteio novo: fica escondido da galera até ser publicado. Os pedidos de troca antigos são apagados.
+
+    `escolhas` guarda o resto do que o organizador escolheu (divisao, num_linhas, diferenca_max, diferenca).
+    """
     with editar(LINHAS) as dados:
         dados.update(linhas=novas_linhas, publicado=False, data=agora(), por_linha=por_linha, equilibrar=equilibrar,
-                     pedidos=[])
+                     pedidos=[], **escolhas)
 
 
 def ajustar_linhas(novas_linhas):
@@ -380,27 +389,41 @@ def despublicar_linhas():
 # ---------- pedidos de troca de linha (também em linhas.json) ----------
 
 MAX_PEDIDOS_RESOLVIDOS = 30  # guarda só os últimos, para o arquivo não crescer para sempre
+MAX_PEDIDOS_NA_FILA = 50     # sem senha, qualquer um sugere: um teto para ninguém encher a fila
 
 
 def pedidos():
     return linhas()["pedidos"]
 
 
-def pedir_troca(jogador, tipo, com=None, destino=None, motivo=""):
-    """Registra o pedido do jogador. Se ele já tinha um pendente, o novo substitui o antigo."""
-    with editar(LINHAS) as dados:
-        lista = [p for p in dados.get("pedidos", []) if not (p["jogador"] == jogador and p["status"] == "pendente")]
-        lista.append({
-            "id": secrets.token_hex(4), "jogador": jogador, "tipo": tipo, "com": com, "destino": destino,
-            "motivo": motivo, "data": agora(), "status": "pendente", "resolvido_em": None,
-        })
-        dados["pedidos"] = lista
+def _mesma_sugestao(a, b):
+    """Mesma troca (em qualquer ordem) ou mesma pessoa indo para a mesma linha."""
+    if a["tipo"] != b["tipo"]:
+        return False
+    if a["tipo"] == "troca":
+        return {a["jogador"], a.get("com")} == {b["jogador"], b.get("com")}
+    return a["jogador"] == b["jogador"] and a.get("destino") == b.get("destino")
 
 
-def cancelar_pedido(jogador):
+def pedir_troca(jogador, tipo, com=None, destino=None, motivo="", por=None):
+    """Põe a sugestão no fim da fila (nenhuma substitui outra).
+
+    Devolve "ok", "repetido" (a mesma sugestão já está na fila) ou "cheia".
+    `por` é quem sugeriu (opcional e sem senha, então é só informativo).
+    """
+    novo = {
+        "id": secrets.token_hex(4), "jogador": jogador, "tipo": tipo, "com": com, "destino": destino,
+        "motivo": motivo, "por": por, "data": agora(), "status": "pendente", "resolvido_em": None,
+    }
     with editar(LINHAS) as dados:
-        dados["pedidos"] = [p for p in dados.get("pedidos", [])
-                            if not (p["jogador"] == jogador and p["status"] == "pendente")]
+        lista = dados.setdefault("pedidos", [])
+        pendentes = [p for p in lista if p["status"] == "pendente"]
+        if any(_mesma_sugestao(p, novo) for p in pendentes):
+            return "repetido"
+        if len(pendentes) >= MAX_PEDIDOS_NA_FILA:
+            return "cheia"
+        lista.append(novo)
+    return "ok"
 
 
 def resolver_pedido(pedido_id, aprovado, novas_linhas=None):

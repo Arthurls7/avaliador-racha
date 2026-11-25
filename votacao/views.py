@@ -14,7 +14,7 @@ from django.views.decorators.http import require_POST
 from . import armazenamento as arm
 from . import trocas
 from .notas import NAO_CONHECO, OPCOES_NOTA, formatar, formatar_curto, ler_nota, resultados
-from .sorteio import forcas, sortear
+from .sorteio import diferenca, forcas, sortear, tamanhos, tamanhos_por_quantidade
 
 # cores do círculo com as iniciais de quem ainda não tem foto (todas com bom contraste para texto branco)
 CORES = ["#d1495b", "#00798c", "#30638e", "#6a4c93", "#2b9348", "#c8553d", "#3d5a80", "#b5179e", "#7c6a0a"]
@@ -24,14 +24,9 @@ MEDALHAS = {1: "🥇", 2: "🥈", 3: "🥉"}
 
 # senha de 4 números de cada jogador
 SESSAO_JOGADOR = "jogador"
-MINUTOS_LOGADO = 30      # depois disso (ou ao salvar as notas) precisa digitar a senha de novo
+DIAS_CONECTADO = 14      # quem entra com a senha fica conectado; o prazo renova a cada uso (ou "Sair")
 MAX_ERROS_SENHA = 5      # tentativas erradas seguidas antes de bloquear aquele jogador
 MINUTOS_BLOQUEIO = 10
-# para onde a tela de senha manda depois de entrar (lista fechada: nada de endereço vindo de fora)
-DESTINOS_DEPOIS_DA_SENHA = {
-    "avaliar": ("votacao:avaliar", "para dar e ver as suas notas"),
-    "trocar": ("votacao:trocar", "para pedir troca de linha"),
-}
 
 
 def _visual(pessoa):
@@ -55,10 +50,24 @@ def _jogador_ou_volta(request, pessoa_id):
 
 
 def _logado_como(request, pessoa):
-    """Entrou com a senha atual desse jogador há menos de MINUTOS_LOGADO?"""
+    """Está conectado como esse jogador, com a senha atual dele e dentro do prazo?"""
     sessao = request.session.get(SESSAO_JOGADOR) or {}
     return (bool(pessoa.get("senha")) and sessao.get("id") == pessoa["id"]
             and sessao.get("senha") == pessoa["senha"] and sessao.get("ate", 0) > time.time())
+
+
+def _conectar(request, pessoa):
+    """Marca (ou renova por mais DIAS_CONECTADO) a conexão do jogador neste celular."""
+    request.session[SESSAO_JOGADOR] = {
+        "id": pessoa["id"], "senha": pessoa["senha"], "ate": time.time() + DIAS_CONECTADO * 24 * 3600,
+    }
+
+
+def _conectado(request):
+    """O jogador conectado neste celular (com a conexão ainda valendo), ou None."""
+    pessoa_id = (request.session.get(SESSAO_JOGADOR) or {}).get("id")
+    pessoa = arm.buscar_jogador(pessoa_id) if pessoa_id else None
+    return pessoa if pessoa and _logado_como(request, pessoa) else None
 
 
 def _outros(pessoa_id):
@@ -108,8 +117,14 @@ def foto(request, arquivo):
 
 def inicio(request):
     avaliacoes = arm.avaliacoes()
-    pessoas = [{**_visual(p), "avaliou": p["id"] in avaliacoes} for p in arm.jogadores()]
-    return render(request, "votacao/inicio.html", {"pessoas": pessoas})
+    conectado = _conectado(request)
+    pessoas = [{**_visual(p), "avaliou": p["id"] in avaliacoes, "voce": bool(conectado) and p["id"] == conectado["id"]}
+               for p in arm.jogadores()]
+    return render(request, "votacao/inicio.html", {
+        "pessoas": pessoas,
+        "conectado": _visual(conectado) if conectado else None,
+        "dias_conectado": DIAS_CONECTADO,
+    })
 
 
 def _cor_linha(numero):
@@ -133,71 +148,57 @@ def ver_linhas(request):
     })
 
 
-# ---------- pedidos de troca de linha (jogador) ----------
+# ---------- sugestões de troca de linha (sem senha, em fila) ----------
 
-def trocar_escolher(request):
-    """"Quem é você?" para pedir troca. Se já entrou com a senha há pouco, vai direto."""
+def sugerir_troca(request):
+    """Qualquer um sugere uma troca para qualquer jogador; a sugestão entra na fila do organizador."""
     linhas, _ = _linhas_publicadas()
     if not linhas:
         messages.error(request, "As linhas ainda não foram publicadas.")
         return redirect("votacao:linhas")
-    nas_linhas = [p for linha in linhas for p in linha]
-    logado = (request.session.get(SESSAO_JOGADOR) or {}).get("id")
-    jogador = arm.buscar_jogador(logado) if logado in {p["id"] for p in nas_linhas} else None
-    if jogador and _logado_como(request, jogador):
-        return redirect("votacao:trocar", pessoa_id=jogador["id"])
-    return render(request, "votacao/trocar_escolher.html", {"pessoas": _por_nome(nas_linhas)})
-
-
-def trocar(request, pessoa_id):
-    jogador = _jogador_ou_volta(request, pessoa_id)
-    if not jogador:
-        return redirect("votacao:inicio")
-    linhas, dados = _linhas_publicadas()
-    if not linhas:
-        messages.error(request, "As linhas ainda não foram publicadas.")
-        return redirect("votacao:linhas")
-    if not _logado_como(request, jogador):  # só o próprio jogador, com a senha dele
-        return redirect(reverse("votacao:entrar", args=[pessoa_id]) + "?para=trocar")
-
     ids = [[p["id"] for p in linha] for linha in linhas]
     onde = {j: i + 1 for i, linha in enumerate(ids) for j in linha}
-    minha = onde.get(pessoa_id)
-    nomes = {p["id"]: p["nome"] for p in arm.pessoas()}
-    meus = [p for p in dados["pedidos"] if p["jogador"] == pessoa_id]
-    pendente = next((p for p in meus if p["status"] == "pendente"), None)
-    ultimo = next((p for p in reversed(meus) if p["status"] != "pendente"), None)
+    jogadores_semana = {p["id"]: p for p in arm.jogadores()}
+    conectado = _conectado(request)
     erro = None
+    escolhido = {"jogador": "", "pedido": "", "por": conectado["id"] if conectado else "", "motivo": ""}
 
-    if request.method == "POST" and minha:
-        if request.POST.get("acao") == "cancelar":
-            arm.cancelar_pedido(pessoa_id)
-            request.session.pop(SESSAO_JOGADOR, None)
-            messages.success(request, "Pedido de troca cancelado.")
-            return redirect("votacao:linhas")
-        escolha = request.POST.get("pedido", "")
-        motivo = " ".join(request.POST.get("motivo", "").split())[:140]
+    if request.method == "POST":
+        escolhido = {campo: request.POST.get(campo, "").strip() for campo in escolhido}
+        jogador, escolha = escolhido["jogador"], escolhido["pedido"]
+        motivo = " ".join(escolhido["motivo"].split())[:140]
+        por = escolhido["por"] if escolhido["por"] in jogadores_semana else None
         pedido = None
-        if escolha.startswith("troca:") and onde.get(escolha[6:]) not in (None, minha):
+        if jogador not in onde:
+            erro = "Escolha quem vai mudar de linha."
+        elif escolha.startswith("troca:") and onde.get(escolha[6:]) not in (None, onde[jogador]):
             pedido = {"tipo": "troca", "com": escolha[6:]}
-        elif escolha.startswith("linha:") and escolha[6:].isdigit() and int(escolha[6:]) in range(1, len(ids) + 1) \
-                and int(escolha[6:]) != minha:
+        elif (escolha.startswith("linha:") and escolha[6:].isdigit()
+              and int(escolha[6:]) in range(1, len(ids) + 1) and int(escolha[6:]) != onde[jogador]):
             pedido = {"tipo": "mudar", "destino": int(escolha[6:])}
+        else:
+            erro = f"Escolha para onde {jogadores_semana[jogador]['nome']} vai (uma linha diferente da dele)."
         if pedido:
-            arm.pedir_troca(pessoa_id, motivo=motivo, **pedido)
-            request.session.pop(SESSAO_JOGADOR, None)  # sai ao enviar, como ao salvar as notas
-            messages.success(request, "🔄 Pedido enviado! O organizador vai ver e aprovar (ou não). "
-                                      "Se aprovar, a mudança aparece aqui nas linhas.")
+            resultado = arm.pedir_troca(jogador, motivo=motivo, por=por, **pedido)
+            if resultado == "ok":
+                messages.success(request, "🔄 Sugestão enviada! Ela entrou na fila do organizador, que aprova (ou não). "
+                                          "Se aprovar, a mudança aparece aqui nas linhas.")
+            elif resultado == "repetido":
+                messages.success(request, "Essa sugestão já está na fila do organizador. 👍")
+            else:
+                messages.error(request, "A fila de sugestões está cheia. Fale direto com o organizador.")
             return redirect("votacao:linhas")
-        erro = "Escolha para onde você quer ir."
 
     return render(request, "votacao/trocar.html", {
-        "pessoa": _visual(jogador),
-        "minha": {"numero": minha, "cor": _cor_linha(minha)} if minha else None,
-        "outras": [{"numero": i + 1, "cor": _cor_linha(i + 1), "jogadores": linha}
-                   for i, linha in enumerate(linhas) if i + 1 != minha],
-        "pendente": trocas.descrever(pendente, nomes, ids) if pendente else "",
-        "ultimo": {"status": ultimo["status"], "texto": trocas.descrever(ultimo, nomes)} if ultimo else None,
+        "linhas": [{
+            "numero": i + 1,
+            "jogadores": linha,
+            # opções de "Para onde?" que levam para esta linha
+            "destinos": [(f"linha:{i + 1}", f"➡️ Ir para a Linha {i + 1}")]
+                        + [(f"troca:{p['id']}", f"🔄 Trocar de lugar com {p['nome']}") for p in linha],
+        } for i, linha in enumerate(linhas)],
+        "todos": _por_nome([_visual(p) for p in jogadores_semana.values()]),
+        "escolhido": escolhido,
         "erro": erro,
     })
 
@@ -219,14 +220,12 @@ def ver_ranking(request):
 
 
 def entrar(request, pessoa_id):
-    """Pede a senha de 4 números do jogador antes de mostrar ou mudar as notas (ou pedir troca de linha)."""
+    """Pede a senha de 4 números do jogador antes de mostrar ou mudar as notas dele."""
     jogador = _jogador_ou_volta(request, pessoa_id)
     if not jogador:
         return redirect("votacao:inicio")
-    para = request.GET.get("para") if request.GET.get("para") in DESTINOS_DEPOIS_DA_SENHA else "avaliar"
-    destino, objetivo = DESTINOS_DEPOIS_DA_SENHA[para]
     if _logado_como(request, jogador):
-        return redirect(destino, pessoa_id=pessoa_id)
+        return redirect("votacao:avaliar", pessoa_id=pessoa_id)
 
     erro = None
     if not jogador["senha"]:
@@ -239,20 +238,15 @@ def entrar(request, pessoa_id):
         elif constant_time_compare(request.POST.get("senha", "").strip(), jogador["senha"]):
             cache.delete(chave)
             request.session.cycle_key()
-            request.session[SESSAO_JOGADOR] = {
-                "id": pessoa_id, "senha": jogador["senha"], "ate": time.time() + MINUTOS_LOGADO * 60,
-            }
-            return redirect(destino, pessoa_id=pessoa_id)
+            _conectar(request, jogador)
+            return redirect("votacao:avaliar", pessoa_id=pessoa_id)
         else:
             erros += 1
             cache.set(chave, erros, MINUTOS_BLOQUEIO * 60)
             restam = MAX_ERROS_SENHA - erros
             erro = "Senha errada. " + (f"Mais {restam} tentativa{'s' if restam > 1 else ''} antes de bloquear."
                                        if restam else f"Bloqueado por {MINUTOS_BLOQUEIO} minutos.")
-    return render(request, "votacao/entrar.html", {
-        "pessoa": _visual(jogador), "erro": erro, "objetivo": objetivo,
-        "voltar": reverse("votacao:trocar_escolher") if para == "trocar" else reverse("votacao:inicio"),
-    })
+    return render(request, "votacao/entrar.html", {"pessoa": _visual(jogador), "erro": erro})
 
 
 @require_POST
@@ -268,6 +262,7 @@ def avaliar(request, pessoa_id):
         return redirect("votacao:inicio")
     if not _logado_como(request, jogador):  # só o próprio jogador, com a senha dele
         return redirect("votacao:entrar", pessoa_id=pessoa_id)
+    _conectar(request, jogador)  # usou: renova o prazo de conexão
     pessoa = _visual(jogador)
     outros = _outros(pessoa_id)
     anterior = arm.avaliacoes().get(pessoa_id) or {}
@@ -293,10 +288,8 @@ def avaliar(request, pessoa_id):
                 "notas": {pid: v for pid, v in escolhas.items() if v != NAO_CONHECO},
                 "nao_conhece": [pid for pid, v in escolhas.items() if v == NAO_CONHECO],
             })
-            # sai ao salvar: num celular compartilhado, o próximo precisa da própria senha
-            request.session.pop(SESSAO_JOGADOR, None)
             messages.success(request, f"Valeu, {pessoa['nome']}! Suas notas foram salvas. 🎉 "
-                                      "Para mudar depois, é só entrar de novo com a sua senha.")
+                                      "Você continua conectado neste celular para mudar quando quiser.")
             return redirect("votacao:inicio")
         erro = "Faltou escolher uma nota (ou \"Não conheço\") para: " + ", ".join(faltando) + "."
 
@@ -480,30 +473,60 @@ def painel_linhas(request):
         "numeros": range(1, len(blocos) + 1),
         "nova_linha": len(blocos) + 1,
         "total": len(jogadores),
+        "divisao": dados["divisao"],
         "por_linha": dados["por_linha"],
+        "num_linhas": min(dados["num_linhas"], max(len(jogadores), 1)),
         "equilibrar": dados["equilibrar"],
+        "diferenca_max": f"{dados['diferenca_max']:g}",  # com ponto, para o <input type=range>
+        "diferenca_atual": (formatar(diferenca([[p["id"] for p in linha] for linha in linhas], forca))
+                            if len(linhas) > 1 else ""),
         "publicado": dados["publicado"],
         "data": _data(dados),
         "media_geral": formatar(forca[sem_nota[0]["id"]]) if sem_nota and len(sem_nota) < len(jogadores) else "",
     })
 
 
+def _inteiro(texto, padrao, minimo, maximo):
+    try:
+        return min(max(int(texto), minimo), maximo)
+    except (TypeError, ValueError):
+        return padrao
+
+
 @_exige_admin
 @require_POST
 def painel_linhas_sortear(request):
-    try:
-        por_linha = min(max(int(request.POST.get("por_linha", "")), 1), 50)
-    except ValueError:
-        por_linha = 5
-    equilibrar = bool(request.POST.get("equilibrar"))
     jogadores = arm.jogadores()
     if not jogadores:
         messages.error(request, "Ninguém na lista desta semana para sortear.")
         return redirect("votacao:painel_linhas")
     ids = [p["id"] for p in jogadores]
-    novas = sortear(ids, forcas(ids, _medias_da_semana(jogadores)), por_linha, equilibrar)
-    arm.salvar_sorteio(novas, por_linha, equilibrar)
-    messages.success(request, f"🎲 {len(novas)} linha(s) sorteada(s)! Confira, ajuste se quiser e publique.")
+    anterior = arm.linhas()
+
+    divisao = "num_linhas" if request.POST.get("divisao") == "num_linhas" else "por_linha"
+    por_linha = _inteiro(request.POST.get("por_linha"), anterior["por_linha"], 1, 50)
+    num_linhas = _inteiro(request.POST.get("num_linhas"), anterior["num_linhas"], 1, len(ids))
+    tams = tamanhos_por_quantidade(len(ids), num_linhas) if divisao == "num_linhas" else tamanhos(len(ids), por_linha)
+    equilibrar = bool(request.POST.get("equilibrar"))
+    try:
+        diferenca_max = min(max(float(request.POST.get("diferenca_max", "").replace(",", ".")), 0.0), 5.0)
+    except ValueError:
+        diferenca_max = anterior["diferenca_max"]
+
+    novas, dif = sortear(ids, forcas(ids, _medias_da_semana(jogadores)), tams, equilibrar, diferenca_max)
+    arm.salvar_sorteio(novas, por_linha, equilibrar, divisao=divisao, num_linhas=num_linhas,
+                       diferenca_max=diferenca_max, diferenca=dif)
+
+    tamanhos_txt = ", ".join(str(len(linha)) for linha in novas)
+    resumo = f"🎲 {len(novas)} linha(s) sorteada(s) ({tamanhos_txt} jogadores)"
+    if len(novas) > 1:
+        resumo += f". Diferença entre a linha mais forte e a mais fraca: {formatar(dif)}"
+        if equilibrar:
+            resumo += f" (limite {formatar(diferenca_max)})"
+    messages.success(request, resumo + ". Confira, ajuste se quiser e publique.")
+    if equilibrar and dif > diferenca_max + 1e-9 and len(novas) > 1:
+        messages.error(request, f"Não deu para ficar dentro do limite de {formatar(diferenca_max)}: com essas notas, "
+                                f"o mais equilibrado que deu foi {formatar(dif)}.")
     return redirect("votacao:painel_linhas")
 
 
@@ -583,6 +606,7 @@ def painel_trocas(request):
             "de": onde.get(pedido["jogador"]),
             "texto": trocas.descrever(pedido, nomes, ids),
             "motivo": pedido.get("motivo", ""),
+            "por": nomes.get(pedido.get("por")) if pedido.get("por") else "",
             "data": _data(pedido),
             "valido": novas is not None,
             # como ficam as linhas envolvidas se aprovar (só o organizador vê as médias)
