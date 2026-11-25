@@ -46,3 +46,21 @@ def descrever(pedido, nomes, linhas=None):
         linha = f" (Linha {onde[outro]})" if outro in onde else ""
         return f"🔄 Trocar com {nomes.get(outro, 'alguém que saiu')}{linha}"
     return f"➡️ Ir para a Linha {pedido.get('destino')}"
+
+
+def comparar(antes, depois):
+    """Uma linha (time) antes e depois da troca, lado a lado, para o organizador conferir.
+
+    Devolve uma lista de pares (como está, como fica); cada lado é (id, situação) ou None, com
+    situação "fica", "sai" ou "entra". Quem entra aparece na mesma altura de quem sai.
+    """
+    entram = [j for j in depois if j not in antes]
+    pares = []
+    for j in antes:
+        if j in depois:
+            pares.append(((j, "fica"), (j, "fica")))
+        else:
+            novo = entram.pop(0) if entram else None
+            pares.append(((j, "sai"), (novo, "entra") if novo else None))
+    pares += [(None, (j, "entra")) for j in entram]
+    return pares

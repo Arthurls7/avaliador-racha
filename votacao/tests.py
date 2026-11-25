@@ -15,7 +15,7 @@ from django.urls import reverse
 from . import armazenamento as arm
 from .notas import ler_nota, resultados
 from .sorteio import diferenca, forcas, sortear, tamanhos, tamanhos_por_quantidade
-from .trocas import aplicar, descrever
+from .trocas import aplicar, comparar, descrever
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 
@@ -41,6 +41,14 @@ class TrocasTest(SimpleTestCase):
         ]:
             self.assertIsNone(aplicar(self.linhas, pedido), pedido)
         self.assertEqual(self.linhas, [["a", "b"], ["c", "d"], ["e"]])  # não mexe nas linhas originais
+
+    def test_comparar_lado_a_lado(self):
+        # troca: quem entra fica na altura de quem sai
+        self.assertEqual(comparar(["a", "b"], ["c", "b"]),
+                         [(("a", "sai"), ("c", "entra")), (("b", "fica"), ("b", "fica"))])
+        # mudar de linha: a de origem perde um, a de destino ganha um no fim
+        self.assertEqual(comparar(["a", "b"], ["b"]), [(("a", "sai"), None), (("b", "fica"), ("b", "fica"))])
+        self.assertEqual(comparar(["c"], ["c", "a"]), [(("c", "fica"), ("c", "fica")), (None, ("a", "entra"))])
 
     def test_descrever(self):
         nomes = {"a": "Ana", "c": "Caio"}
@@ -585,6 +593,10 @@ class FluxoTest(SimpleTestCase):
     def pendentes(self):
         return [p for p in arm.pedidos() if p["status"] == "pendente"]
 
+    def texto(self, resposta):
+        """O texto que aparece na tela (sem as tags e com os espaços juntados)."""
+        return " ".join(re.sub(r"<[^>]+>", " ", resposta.content.decode()).split())
+
     def test_so_sugere_com_linhas_publicadas(self):
         url = reverse("votacao:sugerir_troca")
         self.logar("ana")
@@ -667,12 +679,18 @@ class FluxoTest(SimpleTestCase):
         self.entrar()
         pagina = self.client.get(reverse("votacao:painel_trocas"))
         self.assertContains(pagina, '<span class="contador-menu" title="Sugestões de troca na fila">2</span>', html=True)
-        texto = pagina.content.decode()
-        self.assertLess(texto.index("1º · Ana"), texto.index("2º · Bruno"))
-        self.assertContains(pagina, "🔄 Trocar com Caio (Linha 2)")
-        self.assertContains(pagina, "sugerido por Bruno")
-        self.assertContains(pagina, "sugerido por Davi")
-        self.assertContains(pagina, "“por favor”")
+        tela = self.texto(pagina)
+        # a frase de cada sugestão, na ordem da fila
+        primeira = "Ana da Linha 1 vai pra Linha 2 no lugar de Caio Sugerido por: Bruno"
+        segunda = "Bruno da Linha 1 vai pra Linha 2 no lugar de Davi Sugerido por: Davi"
+        self.assertIn(primeira, tela)
+        self.assertIn(segunda, tela)
+        self.assertLess(tela.index(primeira), tela.index(segunda))
+        self.assertIn("1º da fila", tela)
+        self.assertIn("“por favor”", tela)
+        # como está e como fica: quem sai e quem entra lado a lado, nas duas linhas
+        self.assertIn("Linha 1 Como está Como fica Ana sai → Caio entra Bruno Bruno média", tela)
+        self.assertIn("Linha 2 Como está Como fica Caio sai → Ana entra Davi Davi média", tela)
         self.assertContains(self.client.get(reverse("votacao:painel_linhas")), "2 sugestões de troca na fila")
 
         troca1, troca2 = self.pendentes()
@@ -683,16 +701,20 @@ class FluxoTest(SimpleTestCase):
         self.client.post(reverse("votacao:painel_troca_decidir", args=[troca2["id"]]), {"acao": "recusar"})
         self.assertEqual(arm.linhas()["linhas"], [["caio", "bruno"], ["ana", "davi"]])
         self.assertEqual([p["status"] for p in arm.pedidos()], ["aprovado", "recusado"])
-        self.assertContains(self.client.get(reverse("votacao:painel_trocas")), "Nenhuma sugestão na fila")
+        tela = self.texto(self.client.get(reverse("votacao:painel_trocas")))
+        self.assertIn("Nenhuma sugestão na fila", tela)
+        self.assertIn("❌ Bruno ⇄ Davi · sugerido por Davi", tela)  # histórico, do mais novo para o mais antigo
+        self.assertIn("✅ Ana ⇄ Caio · sugerido por Bruno", tela)
 
     def test_sugestao_antiga_de_mudar_de_linha_ainda_aparece_para_o_organizador(self):
         self.sortear_e_publicar()
         arm.pedir_troca("davi", "mudar", destino=1)  # feita na versão em que dava para "ir para a linha"
         self.entrar()
-        pagina = self.client.get(reverse("votacao:painel_trocas"))
-        self.assertContains(pagina, "➡️ Ir para a Linha 1")
-        self.assertContains(pagina, "sugestão sem nome")
-        self.assertContains(pagina, "(2 → 3 jogadores)")
+        tela = self.texto(self.client.get(reverse("votacao:painel_trocas")))
+        self.assertIn("Davi da Linha 2 vai pra Linha 1 Sugerido por: (sem nome)", tela)
+        # a Linha 2 perde o Davi e a Linha 1 ganha
+        self.assertIn("Linha 2 Como está Como fica Caio Caio Davi sai → — média", tela)
+        self.assertIn("Linha 1 Como está Como fica Ana Ana Bruno Bruno — → Davi entra média", tela)
 
     def test_sugestao_que_nao_da_mais_para_aplicar(self):
         self.sortear_e_publicar()

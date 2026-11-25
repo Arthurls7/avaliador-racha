@@ -1,16 +1,32 @@
 {% extends "votacao/base.html" %}
 {% block titulo %}Trocas · Painel{% endblock %}
 {% block estilo %}
-  .pedido-troca .quem { display: flex; align-items: center; gap: 12px; }
-  .pedido-troca .quem .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; line-height: 1.25; }
-  .pedido-troca .quem strong { font-size: 1.05rem; }
+  .pedido-troca .topo-pedido { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .dupla { display: inline-flex; align-items: center; gap: 6px; }
+  .dupla .seta { font-size: 1.3rem; font-weight: 800; color: var(--suave); }
+  .frase { margin: 12px 0 4px; font-size: 1.08rem; line-height: 1.5; }
+  .etiqueta { display: inline-block; padding: 0 9px; border-radius: 999px; background: var(--cor); color: #fff;
+              font-weight: 800; font-size: .92rem; white-space: nowrap; }
+  .por { margin: 0; }
   .pedido-troca .motivo { margin: 10px 0 0; padding: 8px 12px; border-radius: 12px; background: var(--fundo);
                           font-style: italic; overflow-wrap: break-word; }
-  .efeito { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
-  .efeito li { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
-               background: var(--fundo); font-size: .85rem; font-weight: 600; }
-  .efeito li::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--cor); }
-  .pedido-troca .acoes { margin-top: 12px; }
+
+  /* como está x como fica, uma caixinha por linha envolvida */
+  .comparacao { display: grid; gap: 10px; margin-top: 14px; }
+  .linha-cmp { border: 2px solid var(--borda); border-top: 5px solid var(--cor); border-radius: 14px; padding: 8px 10px 10px; }
+  .linha-cmp h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 1rem; }
+  .linha-cmp h3::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: var(--cor); }
+  .colunas { display: grid; grid-template-columns: 1fr auto 1fr; gap: 3px 6px; align-items: center; }
+  .colunas .cab { font-size: .72rem; font-weight: 800; color: var(--suave); text-transform: uppercase; letter-spacing: .4px; }
+  .colunas .vai { color: var(--suave); font-size: .8rem; text-align: center; }
+  .cel { padding: 4px 8px; border-radius: 8px; font-weight: 600; overflow-wrap: anywhere; line-height: 1.25; }
+  .cel.sai { background: #fdecea; color: var(--erro); }
+  .cel.entra { background: var(--verde-claro); color: var(--verde-escuro); font-weight: 800; }
+  .cel small { display: block; font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; }
+  .cel.vazia { color: var(--suave); }
+  .colunas .media { font-size: .82rem; color: var(--suave); padding: 4px 8px 0; border-top: 1px solid var(--borda); }
+
+  .pedido-troca .acoes { margin-top: 14px; }
   .pedido-troca form { margin: 0; }
   .aviso-invalido { margin: 10px 0 0; color: var(--erro); font-weight: 600; }
   .resolvidos { list-style: none; margin: 0; padding: 0; }
@@ -41,25 +57,48 @@
 
 {% for p in pendentes %}
   <section class="cartao pedido-troca">
-    <div class="quem">
-      {% include "votacao/_avatar.html" with p=p.jogador tamanho="medio" %}
-      <span class="info">
-        <strong>{{ forloop.counter }}º · {{ p.jogador.nome }}</strong>
-        <span>{% if p.de %}Linha {{ p.de }} · {% endif %}{{ p.texto }}</span>
-        <span class="suave pequeno">{% if p.por %}sugerido por {{ p.por }}{% else %}sugestão sem nome{% endif %} · {{ p.data }}</span>
+    <div class="topo-pedido">
+      <span class="dupla">
+        {% include "votacao/_avatar.html" with p=p.jogador tamanho="medio" %}
+        {% if p.outro %}<span class="seta" aria-hidden="true">⇄</span>{% include "votacao/_avatar.html" with p=p.outro tamanho="medio" %}{% endif %}
       </span>
+      <span class="suave pequeno">{{ forloop.counter }}º da fila · {{ p.data }}</span>
     </div>
+
+    <p class="frase">
+      <strong>{{ p.quem }}</strong>
+      {% if p.de %}da <span class="etiqueta" style="--cor: {{ p.cor_de }}">Linha {{ p.de }}</span>{% endif %}
+      vai pra {% if p.para %}<span class="etiqueta" style="--cor: {{ p.cor_para }}">Linha {{ p.para }}</span>{% else %}outra linha{% endif %}
+      {% if p.no_lugar_de %}no lugar de <strong>{{ p.no_lugar_de }}</strong>{% endif %}
+    </p>
+    <p class="por">Sugerido por: <strong>{{ p.por|default:"(sem nome)" }}</strong></p>
     {% if p.motivo %}<p class="motivo">“{{ p.motivo }}”</p>{% endif %}
+
     {% if p.valido %}
-      <ul class="efeito" aria-label="Como ficam as linhas se aprovar">
-        {% for e in p.efeito %}
-          <li style="--cor: {{ e.cor }}">Linha {{ e.numero }}: média {{ e.antes }} → <strong>{{ e.depois }}</strong>
-            {% if e.tam_antes != e.tam_depois %}({{ e.tam_antes }} → {{ e.tam_depois }} jogadores){% endif %}</li>
+      <div class="comparacao">
+        {% for linha in p.linhas %}
+          <div class="linha-cmp" style="--cor: {{ linha.cor }}">
+            <h3>Linha {{ linha.numero }}</h3>
+            <div class="colunas">
+              <span class="cab">Como está</span><span></span><span class="cab">Como fica</span>
+              {% for par in linha.pares %}
+                {% if par.antes %}
+                  <span class="cel {{ par.antes.situacao }}">{{ par.antes.nome }}{% if par.antes.situacao == "sai" %}<small>sai</small>{% endif %}</span>
+                {% else %}<span class="cel vazia">—</span>{% endif %}
+                <span class="vai" aria-hidden="true">{% if par.antes.situacao == "sai" or par.depois.situacao == "entra" %}→{% endif %}</span>
+                {% if par.depois %}
+                  <span class="cel {{ par.depois.situacao }}">{{ par.depois.nome }}{% if par.depois.situacao == "entra" %}<small>entra</small>{% endif %}</span>
+                {% else %}<span class="cel vazia">—</span>{% endif %}
+              {% endfor %}
+              <span class="media">média {{ linha.media_antes }}</span><span></span><span class="media">média <strong>{{ linha.media_depois }}</strong></span>
+            </div>
+          </div>
         {% endfor %}
-      </ul>
+      </div>
     {% else %}
       <p class="aviso-invalido">⚠️ Não dá mais para aplicar: as linhas mudaram desde o pedido.</p>
     {% endif %}
+
     <div class="acoes">
       {% if p.valido %}
         <form method="post" action="{% url 'votacao:painel_troca_decidir' p.id %}">
@@ -78,8 +117,8 @@
     <h2>Resolvidos</h2>
     <ul class="resolvidos">
       {% for r in resolvidos %}
-        <li>{% if r.aprovado %}✅{% else %}❌{% endif %} <strong>{{ r.jogador }}</strong>: {{ r.texto }}
-          <span class="suave pequeno">· {{ r.quando }}</span></li>
+        <li>{% if r.aprovado %}✅{% else %}❌{% endif %} <strong>{{ r.texto }}</strong>
+          <span class="suave pequeno">· sugerido por {{ r.por|default:"(sem nome)" }} · {{ r.quando }}</span></li>
       {% endfor %}
     </ul>
   </section>

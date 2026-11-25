@@ -596,30 +596,53 @@ def painel_trocas(request):
     onde = {j: i + 1 for i, linha in enumerate(ids) for j in linha}
     forca = forcas([p["id"] for p in jogadores], _medias_da_semana(jogadores))
 
+    def nome(pid):
+        return nomes.get(pid, "alguém que saiu")
+
     def media(linha):
         return formatar(sum(forca[j] for j in linha) / len(linha)) if linha else "—"
 
+    def lado(celula):
+        return {"nome": nome(celula[0]), "situacao": celula[1]} if celula else None
+
     def cartao(pedido):
+        jogador, outro = pedido["jogador"], pedido.get("com")
+        troca = pedido["tipo"] == "troca"
+        de = onde.get(jogador)
+        para = onde.get(outro) if troca else pedido.get("destino")
         novas = trocas.aplicar(ids, pedido)
-        mudam = [i for i in range(len(ids)) if novas and sorted(ids[i]) != sorted(novas[i])]
+        # as duas linhas envolvidas, primeiro a de quem pediu: como está e como fica
+        envolvidas = [n for n in (de, para) if n] if novas else []
         return {
             "id": pedido["id"],
-            "jogador": todos.get(pedido["jogador"], {"nome": pedido["jogador"], "iniciais": "?", "cor": "#999"}),
-            "de": onde.get(pedido["jogador"]),
-            "texto": trocas.descrever(pedido, nomes, ids),
+            "jogador": todos.get(jogador, {"nome": nome(jogador), "iniciais": "?", "cor": "#999"}),
+            "outro": todos.get(outro) if troca else None,
+            "quem": nome(jogador),
+            "no_lugar_de": nome(outro) if troca else "",
+            "de": de, "cor_de": _cor_linha(de) if de else "",
+            "para": para, "cor_para": _cor_linha(para) if para else "",
             "motivo": pedido.get("motivo", ""),
-            "por": nomes.get(pedido.get("por")) if pedido.get("por") else "",
+            "por": nomes.get(pedido.get("por"), "") if pedido.get("por") else "",
             "data": _data(pedido),
             "valido": novas is not None,
-            # como ficam as linhas envolvidas se aprovar (só o organizador vê as médias)
-            "efeito": [{"numero": i + 1, "cor": _cor_linha(i + 1), "antes": media(ids[i]), "depois": media(novas[i]),
-                        "tam_antes": len(ids[i]), "tam_depois": len(novas[i])} for i in mudam],
+            "linhas": [{
+                "numero": n,
+                "cor": _cor_linha(n),
+                "pares": [{"antes": lado(a), "depois": lado(d)} for a, d in trocas.comparar(ids[n - 1], novas[n - 1])],
+                "media_antes": media(ids[n - 1]),
+                "media_depois": media(novas[n - 1]),
+            } for n in envolvidas],
         }
+
+    def resumo(pedido):
+        if pedido["tipo"] == "troca":
+            return f"{nome(pedido['jogador'])} ⇄ {nome(pedido.get('com'))}"
+        return f"{nome(pedido['jogador'])} → Linha {pedido.get('destino')}"
 
     pendentes = [cartao(p) for p in dados["pedidos"] if p["status"] == "pendente"]
     resolvidos = [{
-        "jogador": nomes.get(p["jogador"], p["jogador"]),
-        "texto": trocas.descrever(p, nomes),
+        "texto": resumo(p),
+        "por": nomes.get(p.get("por"), "") if p.get("por") else "",
         "aprovado": p["status"] == "aprovado",
         "quando": _data({"data": p["resolvido_em"]}),
     } for p in reversed(dados["pedidos"]) if p["status"] != "pendente"][:10]
