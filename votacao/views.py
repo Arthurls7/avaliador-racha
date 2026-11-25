@@ -28,6 +28,10 @@ DIAS_CONECTADO = 14      # quem entra com a senha fica conectado; o prazo renova
 MAX_ERROS_SENHA = 5      # tentativas erradas seguidas antes de bloquear aquele jogador
 MINUTOS_BLOQUEIO = 10
 
+# Sugestões de troca de linha pela galera (aba Linhas) e a aba "Trocas" do painel para aprovar.
+# Desligado: só o organizador ajusta as linhas, na aba Linhas do painel. Para religar, troque para True.
+TROCAS_ATIVAS = False
+
 
 def _visual(pessoa):
     """Acrescenta o que o template precisa para desenhar o avatar (e nunca leva a senha junto)."""
@@ -145,13 +149,16 @@ def ver_linhas(request):
     return render(request, "votacao/linhas.html", {
         "linhas": [{"numero": i + 1, "cor": _cor_linha(i + 1), "jogadores": linha} for i, linha in enumerate(linhas)],
         "data": _data(dados),
+        "trocas_ativas": TROCAS_ATIVAS,
     })
 
 
-# ---------- sugestões de troca de linha (só quem está conectado, em fila) ----------
+# ---------- sugestões de troca de linha (só quem está conectado, em fila; desligado com TROCAS_ATIVAS) ----------
 
 def sugerir_troca(request):
     """Quem está conectado sugere trocar um jogador de lugar com outro; a sugestão entra na fila do organizador."""
+    if not TROCAS_ATIVAS:
+        return redirect("votacao:linhas")
     linhas, _ = _linhas_publicadas()
     if not linhas:
         messages.error(request, "As linhas ainda não foram publicadas.")
@@ -219,7 +226,7 @@ def entrar(request, pessoa_id):
     if not jogador:
         return redirect("votacao:inicio")
     # destino depois da senha: só estes dois (nada de endereço vindo de fora)
-    para_trocar = request.GET.get("para") == "trocar"
+    para_trocar = TROCAS_ATIVAS and request.GET.get("para") == "trocar"
     destino = reverse("votacao:sugerir_troca") if para_trocar else reverse("votacao:avaliar", args=[pessoa_id])
     if _logado_como(request, jogador):
         return redirect(destino)
@@ -322,8 +329,10 @@ def _exige_admin(view):
 
 
 def _render_painel(request, template, contexto):
-    """render() das telas do painel, com o número de pedidos de troca pendentes (para o menu)."""
-    contexto["trocas_pendentes"] = sum(1 for p in arm.pedidos() if p["status"] == "pendente")
+    """render() das telas do painel, com o que o menu precisa (aba Trocas e quantos pedidos estão na fila)."""
+    contexto["trocas_ativas"] = TROCAS_ATIVAS
+    contexto["trocas_pendentes"] = (sum(1 for p in arm.pedidos() if p["status"] == "pendente")
+                                    if TROCAS_ATIVAS else 0)
     return render(request, template, contexto)
 
 
@@ -587,6 +596,8 @@ def painel_linhas_despublicar(request):
 
 @_exige_admin
 def painel_trocas(request):
+    if not TROCAS_ATIVAS:
+        return redirect("votacao:painel_linhas")
     dados = arm.linhas()
     jogadores = [_visual(p) for p in arm.jogadores()]
     todos = {p["id"]: _visual(p) for p in arm.pessoas()}
@@ -657,6 +668,8 @@ def painel_trocas(request):
 @_exige_admin
 @require_POST
 def painel_troca_decidir(request, pedido_id):
+    if not TROCAS_ATIVAS:
+        return redirect("votacao:painel_linhas")
     dados = arm.linhas()
     pedido = next((p for p in dados["pedidos"] if p["id"] == pedido_id and p["status"] == "pendente"), None)
     if not pedido:

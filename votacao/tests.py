@@ -580,6 +580,35 @@ class FluxoTest(SimpleTestCase):
         self.assertContains(self.client.get(publica), "ainda não foram sorteadas")
 
     # ---------- sugestões de troca de linha (só conectado, só troca, em fila) ----------
+    # Hoje estão desligadas (TROCAS_ATIVAS = False): só o organizador ajusta as linhas. Os testes marcados com
+    # @mock.patch(..., True) conferem que o recurso continua funcionando, para quando for religado.
+
+    def test_trocas_desligadas_so_o_organizador_ajusta(self):
+        arm.salvar_sorteio([["ana", "bruno"], ["caio", "davi"]], 2, True)
+        arm.publicar_linhas()
+        # nada de sugestão na página pública
+        self.assertNotContains(self.client.get(reverse("votacao:linhas")), reverse("votacao:sugerir_troca"))
+        self.logar("ana")
+        url = reverse("votacao:sugerir_troca")
+        self.assertRedirects(self.client.get(url), reverse("votacao:linhas"))
+        self.client.post(url, {"jogador": "ana", "com": "caio"})
+        self.assertEqual(arm.pedidos(), [])
+        # a senha com ?para=trocar só leva para as notas
+        self.client.post(reverse("votacao:sair_jogador"))
+        resposta = self.client.post(reverse("votacao:entrar", args=["ana"]) + "?para=trocar", {"senha": self.senha("ana")})
+        self.assertRedirects(resposta, reverse("votacao:avaliar", args=["ana"]), fetch_redirect_response=False)
+        # no painel, sem aba Trocas; o ajuste manual continua
+        self.entrar()
+        painel = self.client.get(reverse("votacao:painel_linhas"))
+        self.assertNotContains(painel, reverse("votacao:painel_trocas"))
+        self.assertNotContains(painel, 'class="menu cheio"')
+        self.assertRedirects(self.client.get(reverse("votacao:painel_trocas")), reverse("votacao:painel_linhas"))
+        arm.pedir_troca("ana", "troca", com="caio")
+        pedido = arm.pedidos()[0]["id"]
+        self.client.post(reverse("votacao:painel_troca_decidir", args=[pedido]), {"acao": "aprovar"})
+        self.assertEqual(arm.linhas()["linhas"], [["ana", "bruno"], ["caio", "davi"]])  # nada aprovado por fora
+        self.client.post(reverse("votacao:painel_linhas_ajustar"), {"linha_ana": "2"})
+        self.assertEqual(arm.linhas()["linhas"], [["bruno"], ["caio", "davi", "ana"]])
 
     def sortear_e_publicar(self):
         arm.salvar_sorteio([["ana", "bruno"], ["caio", "davi"]], 2, True)
@@ -597,6 +626,7 @@ class FluxoTest(SimpleTestCase):
         """O texto que aparece na tela (sem as tags e com os espaços juntados)."""
         return " ".join(re.sub(r"<[^>]+>", " ", resposta.content.decode()).split())
 
+    @mock.patch("votacao.views.TROCAS_ATIVAS", True)
     def test_so_sugere_com_linhas_publicadas(self):
         url = reverse("votacao:sugerir_troca")
         self.logar("ana")
@@ -607,6 +637,7 @@ class FluxoTest(SimpleTestCase):
         self.assertContains(self.client.get(reverse("votacao:linhas")), "Sugerir troca de linha")
         self.assertContains(self.client.get(url), "Trocar de lugar com quem?")
 
+    @mock.patch("votacao.views.TROCAS_ATIVAS", True)
     def test_sugerir_exige_estar_conectado(self):
         self.sortear_e_publicar()
         url = reverse("votacao:sugerir_troca")
@@ -623,6 +654,7 @@ class FluxoTest(SimpleTestCase):
         self.assertRedirects(self.client.post(tela_senha, {"senha": self.senha("bruno")}), url)
         self.assertContains(self.client.get(url), "Sugerindo como <strong>Bruno</strong>")
 
+    @mock.patch("votacao.views.TROCAS_ATIVAS", True)
     def test_sugere_troca_de_outras_pessoas_e_fica_registrado_quem_sugeriu(self):
         self.sortear_e_publicar()
         self.logar("bruno")
@@ -632,6 +664,7 @@ class FluxoTest(SimpleTestCase):
         self.assertEqual((pedido["jogador"], pedido["tipo"], pedido["com"], pedido["motivo"], pedido["por"]),
                          ("ana", "troca", "caio", "os dois são primos", "bruno"))
 
+    @mock.patch("votacao.views.TROCAS_ATIVAS", True)
     def test_so_tem_troca_nao_tem_ir_para_linha(self):
         self.sortear_e_publicar()
         self.logar("ana")
@@ -642,6 +675,7 @@ class FluxoTest(SimpleTestCase):
         self.client.post(reverse("votacao:sugerir_troca"), {"jogador": "ana", "pedido": "linha:2"})
         self.assertEqual(arm.pedidos(), [])
 
+    @mock.patch("votacao.views.TROCAS_ATIVAS", True)
     def test_sugestao_invalida(self):
         self.sortear_e_publicar()
         self.logar("ana")
@@ -650,6 +684,7 @@ class FluxoTest(SimpleTestCase):
         self.assertContains(self.sugerir("ninguem", "caio"), "Escolha quem vai trocar de linha.")
         self.assertEqual(arm.pedidos(), [])
 
+    @mock.patch("votacao.views.TROCAS_ATIVAS", True)
     def test_fila_nao_substitui_e_junta_repetidas(self):
         self.sortear_e_publicar()
         self.logar("ana")
@@ -660,6 +695,7 @@ class FluxoTest(SimpleTestCase):
         self.assertContains(resposta, "Essa troca já está na fila")
         self.assertEqual([(p["jogador"], p["com"]) for p in self.pendentes()], [("ana", "caio"), ("ana", "davi")])
 
+    @mock.patch("votacao.views.TROCAS_ATIVAS", True)
     def test_fila_tem_teto(self):
         self.sortear_e_publicar()
         self.logar("ana")
@@ -670,6 +706,7 @@ class FluxoTest(SimpleTestCase):
         self.assertContains(resposta, "A fila de sugestões está cheia")
         self.assertEqual(len(self.pendentes()), 2)
 
+    @mock.patch("votacao.views.TROCAS_ATIVAS", True)
     def test_organizador_aprova_e_recusa_na_ordem_da_fila(self):
         self.sortear_e_publicar()
         self.logar("bruno")
@@ -706,6 +743,7 @@ class FluxoTest(SimpleTestCase):
         self.assertIn("❌ Bruno ⇄ Davi · sugerido por Davi", tela)  # histórico, do mais novo para o mais antigo
         self.assertIn("✅ Ana ⇄ Caio · sugerido por Bruno", tela)
 
+    @mock.patch("votacao.views.TROCAS_ATIVAS", True)
     def test_sugestao_antiga_de_mudar_de_linha_ainda_aparece_para_o_organizador(self):
         self.sortear_e_publicar()
         arm.pedir_troca("davi", "mudar", destino=1)  # feita na versão em que dava para "ir para a linha"
@@ -716,6 +754,7 @@ class FluxoTest(SimpleTestCase):
         self.assertIn("Linha 2 Como está Como fica Caio Caio Davi sai → — média", tela)
         self.assertIn("Linha 1 Como está Como fica Ana Ana Bruno Bruno — → Davi entra média", tela)
 
+    @mock.patch("votacao.views.TROCAS_ATIVAS", True)
     def test_sugestao_que_nao_da_mais_para_aplicar(self):
         self.sortear_e_publicar()
         self.logar("bruno")
@@ -730,6 +769,7 @@ class FluxoTest(SimpleTestCase):
         self.assertContains(resposta, "Não dá mais para aplicar o pedido de Ana")
         self.assertEqual(len(self.pendentes()), 1)
 
+    @mock.patch("votacao.views.TROCAS_ATIVAS", True)
     def test_sortear_de_novo_apaga_a_fila(self):
         self.sortear_e_publicar()
         self.logar("ana")

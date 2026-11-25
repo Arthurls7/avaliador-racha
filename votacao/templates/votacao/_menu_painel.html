@@ -1,7 +1,9 @@
-<nav class="menu" aria-label="Menu do organizador">
+<nav class="menu{% if trocas_ativas %} cheio{% endif %}" aria-label="Menu do organizador">
   <a href="{% url 'votacao:painel' %}" class="{% if aba == 'semana' %}ativa{% endif %}"{% if aba == 'semana' %} aria-current="page"{% endif %}><span class="emoji">📋 </span>Semana</a>
   <a href="{% url 'votacao:painel_linhas' %}" class="{% if aba == 'linhas' %}ativa{% endif %}"{% if aba == 'linhas' %} aria-current="page"{% endif %}><span class="emoji">👥 </span>Linhas</a>
-  <a href="{% url 'votacao:painel_trocas' %}" class="{% if aba == 'trocas' %}ativa{% endif %}"{% if aba == 'trocas' %} aria-current="page"{% endif %}><span class="emoji">🔄 </span>Trocas{% if trocas_pendentes %}<span class="contador-menu" title="Sugestões de troca na fila">{{ trocas_pendentes }}</span>{% endif %}</a>
+  {% if trocas_ativas %}
+    <a href="{% url 'votacao:painel_trocas' %}" class="{% if aba == 'trocas' %}ativa{% endif %}"{% if aba == 'trocas' %} aria-current="page"{% endif %}><span class="emoji">🔄 </span>Trocas{% if trocas_pendentes %}<span class="contador-menu" title="Sugestões de troca na fila">{{ trocas_pendentes }}</span>{% endif %}</a>
+  {% endif %}
   <a href="{% url 'votacao:painel_cadastro' %}" class="{% if aba == 'cadastro' %}ativa{% endif %}"{% if aba == 'cadastro' %} aria-current="page"{% endif %}><span class="emoji">🗂️ </span>Cadastro</a>
 </nav>
 <div class="acoes-topo">
