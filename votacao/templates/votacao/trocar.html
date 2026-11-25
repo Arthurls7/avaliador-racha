@@ -2,71 +2,88 @@
 {% block titulo %}Sugerir troca{% endblock %}
 {% block estilo %}
   .sugestao select, .sugestao input[type=text] { display: block; width: 100%; margin: 6px 0 16px; }
+  .como { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .como .texto { flex: 1; min-width: 0; }
+  .como form { margin: 0; }
 {% endblock %}
 {% block menu %}{% include "votacao/_menu_publico.html" with aba="linhas" %}{% endblock %}
 {% block conteudo %}
 <a class="voltar" href="{% url 'votacao:linhas' %}">← Voltar para as linhas</a>
 <h1>🔄 Sugerir troca</h1>
-<p class="suave">Qualquer um pode sugerir, para si ou para outra pessoa. A sugestão entra na fila do organizador,
-  que aprova (ou não).</p>
-{% if erro %}<div class="msg error">{{ erro }}</div>{% endif %}
 
-<form method="post" class="cartao sugestao" id="form-sugestao">
-  {% csrf_token %}
-  <label for="jogador">Quem vai mudar de linha?</label>
-  <select name="jogador" id="jogador" required>
-    <option value="">Escolha…</option>
-    {% for linha in linhas %}
-      <optgroup label="Linha {{ linha.numero }}">
-        {% for p in linha.jogadores %}
-          <option value="{{ p.id }}" data-linha="{{ linha.numero }}"{% if p.id == escolhido.jogador %} selected{% endif %}>{{ p.nome }}</option>
-        {% endfor %}
-      </optgroup>
+{% if escolher %}
+  {# ninguém conectado neste celular: entra com a senha e volta para cá #}
+  <p class="suave">Para sugerir uma troca, entre com a sua senha. Toque em você: 🔑</p>
+  <div class="grade">
+    {% for p in escolher %}
+      <a class="jogador" href="{% url 'votacao:entrar' p.id %}?para=trocar">
+        {% include "votacao/_avatar.html" with p=p tamanho="grande" %}
+        <span class="nome">{{ p.nome }}</span>
+      </a>
     {% endfor %}
-  </select>
+  </div>
+{% else %}
+  <p class="suave">Sugira trocar dois jogadores de lugar (pode ser você ou outras pessoas). A sugestão entra na fila
+    do organizador, que aprova (ou não).</p>
+  <div class="msg info como">
+    {% include "votacao/_avatar.html" with p=conectado tamanho="mini" %}
+    <span class="texto">Sugerindo como <strong>{{ conectado.nome }}</strong>.</span>
+    <form method="post" action="{% url 'votacao:sair_jogador' %}">
+      {% csrf_token %}<button type="submit" class="link">Não é você? Sair</button>
+    </form>
+  </div>
+  {% if erro %}<div class="msg error">{{ erro }}</div>{% endif %}
 
-  <label for="pedido">Para onde?</label>
-  <select name="pedido" id="pedido" required>
-    <option value="">Escolha…</option>
-    {% for linha in linhas %}
-      <optgroup label="Linha {{ linha.numero }}" data-linha="{{ linha.numero }}">
-        {% for valor, rotulo in linha.destinos %}
-          <option value="{{ valor }}"{% if valor == escolhido.pedido %} selected{% endif %}>{{ rotulo }}</option>
-        {% endfor %}
-      </optgroup>
-    {% endfor %}
-  </select>
+  <form method="post" class="cartao sugestao" id="form-sugestao">
+    {% csrf_token %}
+    <label for="jogador">Quem vai trocar de linha?</label>
+    <select name="jogador" id="jogador" required>
+      <option value="">Escolha…</option>
+      {% for linha in linhas %}
+        <optgroup label="Linha {{ linha.numero }}">
+          {% for p in linha.jogadores %}
+            <option value="{{ p.id }}" data-linha="{{ linha.numero }}"{% if p.id == escolhido.jogador %} selected{% endif %}>{{ p.nome }}</option>
+          {% endfor %}
+        </optgroup>
+      {% endfor %}
+    </select>
 
-  <label for="por">Quem está sugerindo? <span class="suave">(opcional)</span></label>
-  <select name="por" id="por">
-    <option value="">Prefiro não dizer</option>
-    {% for p in todos %}
-      <option value="{{ p.id }}"{% if p.id == escolhido.por %} selected{% endif %}>{{ p.nome }}</option>
-    {% endfor %}
-  </select>
+    <label for="com">Trocar de lugar com quem?</label>
+    <select name="com" id="com" required>
+      <option value="">Escolha…</option>
+      {% for linha in linhas %}
+        <optgroup label="Linha {{ linha.numero }}" data-linha="{{ linha.numero }}">
+          {% for p in linha.jogadores %}
+            <option value="{{ p.id }}"{% if p.id == escolhido.com %} selected{% endif %}>{{ p.nome }}</option>
+          {% endfor %}
+        </optgroup>
+      {% endfor %}
+    </select>
 
-  <label for="motivo">Por quê? <span class="suave">(opcional)</span></label>
-  <input type="text" name="motivo" id="motivo" maxlength="140" value="{{ escolhido.motivo }}"
-         placeholder="Ex.: os dois são primos e querem jogar juntos">
+    <label for="motivo">Por quê? <span class="suave">(opcional)</span></label>
+    <input type="text" name="motivo" id="motivo" maxlength="140" value="{{ escolhido.motivo }}"
+           placeholder="Ex.: os dois são primos e querem jogar juntos">
 
-  <button type="submit" class="botao largo">Enviar sugestão</button>
-</form>
+    <button type="submit" class="botao largo">Enviar sugestão</button>
+  </form>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script>
-  // "Para onde?" só deixa escolher linhas diferentes da linha de quem vai mudar
+  // "Trocar com quem?" só deixa escolher gente de outra linha
   (function () {
-    const quem = document.getElementById("jogador"), para = document.getElementById("pedido");
+    const quem = document.getElementById("jogador"), com = document.getElementById("com");
+    if (!quem) return;
     function filtrar() {
       const linha = quem.selectedOptions[0] && quem.selectedOptions[0].dataset.linha;
-      para.querySelectorAll("optgroup").forEach(grupo => {
+      com.querySelectorAll("optgroup").forEach(grupo => {
         const mesma = Boolean(linha) && grupo.dataset.linha === linha;
         grupo.disabled = mesma;
         grupo.hidden = mesma;
       });
-      const escolhida = para.selectedOptions[0];
-      if (escolhida && escolhida.parentElement.disabled) para.value = "";
+      const escolhida = com.selectedOptions[0];
+      if (escolhida && escolhida.parentElement.disabled) com.value = "";
     }
     quem.addEventListener("change", filtrar);
     filtrar();

@@ -11,13 +11,13 @@
   .pin:focus { outline: none; border-color: var(--verde); }
   .entrar .msg { text-align: left; }
 {% endblock %}
-{% block menu %}{% include "votacao/_menu_publico.html" with aba="avaliar" %}{% endblock %}
+{% block menu %}{% include "votacao/_menu_publico.html" with aba=aba %}{% endblock %}
 {% block conteudo %}
-<a class="voltar" href="{% url 'votacao:inicio' %}">← Não é você?</a>
+<a class="voltar" href="{{ voltar }}">← Não é você?</a>
 <div class="cartao entrar">
   {% include "votacao/_avatar.html" with p=pessoa tamanho="grande" %}
   <h1>Oi, {{ pessoa.nome }}! 👋</h1>
-  <p class="suave">Digite a sua senha de 4 números para dar e ver as suas notas.</p>
+  <p class="suave">Digite a sua senha de 4 números {{ objetivo }}.</p>
   {% if erro %}<div class="msg error">{{ erro }}</div>{% endif %}
   <form method="post" id="form-senha">
     {% csrf_token %}

@@ -21,8 +21,8 @@
 {% block menu %}{% include "votacao/_menu_painel.html" with aba="trocas" %}{% endblock %}
 {% block conteudo %}
 <h1>🔄 Trocas</h1>
-<p class="suave">Fila de sugestões de troca, da mais antiga para a mais nova. Qualquer um sugere, sem senha, então
-  "sugerido por" é só informativo. Aprovar já muda as linhas{% if publicado %} (e a galera vê na hora){% endif %}.
+<p class="suave">Fila de sugestões de troca, da mais antiga para a mais nova. Quem sugere está conectado com a
+  própria senha. Aprovar já muda as linhas{% if publicado %} (e a galera vê na hora){% endif %}.
   Sortear as linhas de novo apaga a fila.</p>
 
 {% if not tem_linhas %}

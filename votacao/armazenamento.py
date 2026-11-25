@@ -22,7 +22,7 @@ dados/linhas.json
     As linhas (times) sorteadas; só aparecem na página inicial depois de publicadas.
     "divisao", "por_linha", "num_linhas", "equilibrar" e "diferenca_max" são as escolhas do último sorteio
     (o painel lembra delas); "diferenca" é a diferença entre a linha mais forte e a mais fraca naquele sorteio.
-    "pedidos" é a fila de sugestões de troca de linha (qualquer um sugere, sem senha, para qualquer jogador);
+    "pedidos" é a fila de sugestões de troca de linha (quem está conectado sugere trocar dois jogadores);
     o organizador aprova ou recusa, na ordem em que chegaram.
 
 As fotos ficam em MEDIA_ROOT/fotos/.
@@ -389,7 +389,7 @@ def despublicar_linhas():
 # ---------- pedidos de troca de linha (também em linhas.json) ----------
 
 MAX_PEDIDOS_RESOLVIDOS = 30  # guarda só os últimos, para o arquivo não crescer para sempre
-MAX_PEDIDOS_NA_FILA = 50     # sem senha, qualquer um sugere: um teto para ninguém encher a fila
+MAX_PEDIDOS_NA_FILA = 50     # um teto para ninguém encher a fila
 
 
 def pedidos():
@@ -409,7 +409,7 @@ def pedir_troca(jogador, tipo, com=None, destino=None, motivo="", por=None):
     """Põe a sugestão no fim da fila (nenhuma substitui outra).
 
     Devolve "ok", "repetido" (a mesma sugestão já está na fila) ou "cheia".
-    `por` é quem sugeriu (opcional e sem senha, então é só informativo).
+    `por` é quem sugeriu (o jogador conectado; pode ser None em sugestões antigas).
     """
     novo = {
         "id": secrets.token_hex(4), "jogador": jogador, "tipo": tipo, "com": com, "destino": destino,

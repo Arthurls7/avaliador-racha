@@ -148,56 +148,50 @@ def ver_linhas(request):
     })
 
 
-# ---------- sugestões de troca de linha (sem senha, em fila) ----------
+# ---------- sugestões de troca de linha (só quem está conectado, em fila) ----------
 
 def sugerir_troca(request):
-    """Qualquer um sugere uma troca para qualquer jogador; a sugestão entra na fila do organizador."""
+    """Quem está conectado sugere trocar um jogador de lugar com outro; a sugestão entra na fila do organizador."""
     linhas, _ = _linhas_publicadas()
     if not linhas:
         messages.error(request, "As linhas ainda não foram publicadas.")
         return redirect("votacao:linhas")
+    conectado = _conectado(request)
+    if not conectado:
+        # precisa entrar com a própria senha; depois volta para cá
+        return render(request, "votacao/trocar.html", {
+            "escolher": _por_nome([_visual(p) for p in arm.jogadores()]),
+        })
+    _conectar(request, conectado)  # usou: renova o prazo de conexão
+
     ids = [[p["id"] for p in linha] for linha in linhas]
     onde = {j: i + 1 for i, linha in enumerate(ids) for j in linha}
-    jogadores_semana = {p["id"]: p for p in arm.jogadores()}
-    conectado = _conectado(request)
+    nomes = {p["id"]: p["nome"] for p in arm.jogadores()}
     erro = None
-    escolhido = {"jogador": "", "pedido": "", "por": conectado["id"] if conectado else "", "motivo": ""}
+    escolhido = {"jogador": "", "com": "", "motivo": ""}
 
     if request.method == "POST":
         escolhido = {campo: request.POST.get(campo, "").strip() for campo in escolhido}
-        jogador, escolha = escolhido["jogador"], escolhido["pedido"]
-        motivo = " ".join(escolhido["motivo"].split())[:140]
-        por = escolhido["por"] if escolhido["por"] in jogadores_semana else None
-        pedido = None
+        jogador, com = escolhido["jogador"], escolhido["com"]
         if jogador not in onde:
-            erro = "Escolha quem vai mudar de linha."
-        elif escolha.startswith("troca:") and onde.get(escolha[6:]) not in (None, onde[jogador]):
-            pedido = {"tipo": "troca", "com": escolha[6:]}
-        elif (escolha.startswith("linha:") and escolha[6:].isdigit()
-              and int(escolha[6:]) in range(1, len(ids) + 1) and int(escolha[6:]) != onde[jogador]):
-            pedido = {"tipo": "mudar", "destino": int(escolha[6:])}
+            erro = "Escolha quem vai trocar de linha."
+        elif onde.get(com) in (None, onde[jogador]):
+            erro = f"Escolha com quem {nomes[jogador]} troca de lugar (alguém de outra linha)."
         else:
-            erro = f"Escolha para onde {jogadores_semana[jogador]['nome']} vai (uma linha diferente da dele)."
-        if pedido:
-            resultado = arm.pedir_troca(jogador, motivo=motivo, por=por, **pedido)
+            motivo = " ".join(escolhido["motivo"].split())[:140]
+            resultado = arm.pedir_troca(jogador, "troca", com=com, motivo=motivo, por=conectado["id"])
             if resultado == "ok":
                 messages.success(request, "🔄 Sugestão enviada! Ela entrou na fila do organizador, que aprova (ou não). "
-                                          "Se aprovar, a mudança aparece aqui nas linhas.")
+                                          "Se aprovar, a troca aparece aqui nas linhas.")
             elif resultado == "repetido":
-                messages.success(request, "Essa sugestão já está na fila do organizador. 👍")
+                messages.success(request, "Essa troca já está na fila do organizador. 👍")
             else:
                 messages.error(request, "A fila de sugestões está cheia. Fale direto com o organizador.")
             return redirect("votacao:linhas")
 
     return render(request, "votacao/trocar.html", {
-        "linhas": [{
-            "numero": i + 1,
-            "jogadores": linha,
-            # opções de "Para onde?" que levam para esta linha
-            "destinos": [(f"linha:{i + 1}", f"➡️ Ir para a Linha {i + 1}")]
-                        + [(f"troca:{p['id']}", f"🔄 Trocar de lugar com {p['nome']}") for p in linha],
-        } for i, linha in enumerate(linhas)],
-        "todos": _por_nome([_visual(p) for p in jogadores_semana.values()]),
+        "conectado": _visual(conectado),
+        "linhas": [{"numero": i + 1, "jogadores": linha} for i, linha in enumerate(linhas)],
         "escolhido": escolhido,
         "erro": erro,
     })
@@ -220,12 +214,15 @@ def ver_ranking(request):
 
 
 def entrar(request, pessoa_id):
-    """Pede a senha de 4 números do jogador antes de mostrar ou mudar as notas dele."""
+    """Pede a senha de 4 números do jogador (para votar, ou para sugerir troca com ?para=trocar)."""
     jogador = _jogador_ou_volta(request, pessoa_id)
     if not jogador:
         return redirect("votacao:inicio")
+    # destino depois da senha: só estes dois (nada de endereço vindo de fora)
+    para_trocar = request.GET.get("para") == "trocar"
+    destino = reverse("votacao:sugerir_troca") if para_trocar else reverse("votacao:avaliar", args=[pessoa_id])
     if _logado_como(request, jogador):
-        return redirect("votacao:avaliar", pessoa_id=pessoa_id)
+        return redirect(destino)
 
     erro = None
     if not jogador["senha"]:
@@ -239,14 +236,19 @@ def entrar(request, pessoa_id):
             cache.delete(chave)
             request.session.cycle_key()
             _conectar(request, jogador)
-            return redirect("votacao:avaliar", pessoa_id=pessoa_id)
+            return redirect(destino)
         else:
             erros += 1
             cache.set(chave, erros, MINUTOS_BLOQUEIO * 60)
             restam = MAX_ERROS_SENHA - erros
             erro = "Senha errada. " + (f"Mais {restam} tentativa{'s' if restam > 1 else ''} antes de bloquear."
                                        if restam else f"Bloqueado por {MINUTOS_BLOQUEIO} minutos.")
-    return render(request, "votacao/entrar.html", {"pessoa": _visual(jogador), "erro": erro})
+    return render(request, "votacao/entrar.html", {
+        "pessoa": _visual(jogador), "erro": erro,
+        "objetivo": "para sugerir troca de linha" if para_trocar else "para dar e ver as suas notas",
+        "voltar": reverse("votacao:sugerir_troca") if para_trocar else reverse("votacao:inicio"),
+        "aba": "linhas" if para_trocar else "avaliar",
+    })
 
 
 @require_POST
