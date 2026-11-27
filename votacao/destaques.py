@@ -1,6 +1,6 @@
 """Tags divertidas e setas de sobe/desce do ranking público (sem mostrar a média de ninguém).
 
-Cada um pode ter várias tags, mas só aparece UMA: a mais rara da semana (a que menos gente tem).
+Cada um pode ter várias tags, mas só aparecem MAX_TAGS: as mais raras da semana (as que menos gente tem).
 Empate: vale a ordem de ORDEM, das tags mais raras por natureza para as mais comuns. "Já votou" só
 aparece quando a pessoa não tem nenhuma outra.
 
@@ -30,6 +30,7 @@ CORACAO_MOLE = 8       # Coração mole: mais da metade das notas que deu são e
 UNANIMIDADE = 1.0      # desvio das notas de até 1 ponto (escala de 1 a 10)
 POLEMICO = 2.5         # desvio de 2,5 pontos ou mais
 MUDANCA = 3            # posições que precisa subir (🚀) ou cair (📉)
+MAX_TAGS = 2           # quantas tags aparecem para cada um
 
 # da mais rara por natureza para a mais comum: desempata quando duas tags são igualmente raras na semana
 ORDEM = ["Craque da galera", "Segue no topo", "Pior do racha", "Campeão da última semana", "Escapou por pouco",
@@ -73,11 +74,11 @@ def _jeito_de_votar(dadas):
 
 
 def destaques(ranking, votaram, semanas, dadas=None):
-    """A tag (a mais rara) e o movimento de cada um do ranking.
+    """As tags que aparecem (as mais raras) e o movimento de cada um do ranking.
 
     `ranking`: linhas de resultados() que têm nota, já na ordem; `votaram`: ids de quem votou esta semana;
     `semanas`: o histórico (da mais antiga para a mais nova); `dadas`: {id: notas que a pessoa deu}.
-    Devolve {id: {"tag": {...} | None, "tags": [todas, da mais rara para a mais comum], "mov": {...} | None}}.
+    Devolve {id: {"mostrar": [até MAX_TAGS], "tags": [todas, da mais rara para a mais comum], "mov": {...} | None}}.
     """
     dadas = dadas or {}
     ultima = semanas[-1] if semanas else None
@@ -124,7 +125,7 @@ def destaques(ranking, votaram, semanas, dadas=None):
             tags.append(_tag("🗳️", "Já votou", "suave"))
         saida[pid] = {"tags": tags, "mov": mov}
 
-    # só a mais rara de cada um: a que menos gente tem nesta semana; empate pela ORDEM; "Já votou" por último
+    # só as mais raras de cada um: as que menos gente tem nesta semana; empate pela ORDEM; "Já votou" por último
     quantos_tem = Counter(t["texto"] for e in saida.values() for t in e["tags"])
 
     def raridade(t):
@@ -132,5 +133,6 @@ def destaques(ranking, votaram, semanas, dadas=None):
 
     for e in saida.values():
         e["tags"].sort(key=raridade)
-        e["tag"] = e["tags"][0] if e["tags"] else None
+        outras = [t for t in e["tags"] if t["texto"] != "Já votou"]
+        e["mostrar"] = outras[:MAX_TAGS] or e["tags"][:1]  # "Já votou" só para quem não tem outra
     return saida

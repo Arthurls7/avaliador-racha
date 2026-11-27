@@ -673,11 +673,14 @@ class FluxoTest(SimpleTestCase):
         # tags
         ranking = self.sem_legenda(resposta)
         self.assertEqual(ranking.count("👑 Craque da galera"), 1)
-        # cada um mostra só a tag mais rara: a Ana (última) também é Carrasco e já votou, mas aparece "Pior do racha"
+        # na lista, até duas tags, as mais raras: a Ana (última) é Pior do racha e Carrasco (também já votou, mas
+        # isso só aparece para quem não tem outra). No pódio, só uma: o Bruno é Craque (e já levou 10, que não
+        # aparece). Caio e Davi não têm tag.
         self.assertEqual(ranking.count("🏮 Pior do racha"), 1)
-        self.assertNotIn("Carrasco", ranking)
+        self.assertEqual(ranking.count("🔪 Carrasco"), 1)
+        self.assertNotIn("Já levou 10", ranking)
         self.assertNotIn("Já votou", ranking)
-        self.assertEqual(ranking.count('class="tag '), 2)  # Bruno e Ana; Caio e Davi não têm tag
+        self.assertEqual(ranking.count('class="tag '), 3)
         self.assertNotIn("Estreante", resposta.content.decode())  # essa tag não existe mais
         self.assertNotIn('class="mov', ranking)  # nem setas de sobe/desce
         self.assertContains(resposta, "O que significam as tags?")
@@ -705,18 +708,21 @@ class FluxoTest(SimpleTestCase):
         self.assertContains(resposta, "🎉 Todo mundo já votou!")
         ranking = self.sem_legenda(resposta)
         self.assertNotContains(resposta, "Todo mundo conhece")  # essa tag não existe mais
-        # cada um mostra só a tag mais rara que tem. Todo mundo é Unanimidade e já votou: essas não aparecem.
-        # Lia (1ª) é a craque; Kiko e Juca, quentes (3 têm); Iris a Fabio, medianos (5 têm); Eva (8ª) escapou por
-        # pouco da zona; Davi, Caio e Bruno, gelados (4 têm); a Ana é a pior do racha (e também Misteriosa)
-        self.assertEqual(ranking.count('class="tag '), 12)  # uma por pessoa
+        # as mais raras de cada um: no pódio só uma (Lia: Craque; Kiko e Juca: Quente) e na lista até duas
+        # (Iris a Fabio: Mediano e Unanimidade; Eva (8ª): Escapou por pouco e Mediano; Davi, Caio e Bruno: Gelado e
+        # Unanimidade; Ana: Pior do racha e Misteriosa). Todo mundo já votou, mas isso não aparece.
+        self.assertEqual(ranking.count('class="tag '), 3 + 9 * 2)
+        podio = ranking.split('class="podio"')[1].split("</section>")[0]
+        self.assertEqual(podio.count('class="tag '), 3)
         self.assertEqual(ranking.count("👑 Craque da galera"), 1)
         self.assertEqual(ranking.count("🔥 Quente"), 2)
-        self.assertEqual(ranking.count("😐 Mediano"), 4)
+        self.assertEqual(ranking.count("😐 Mediano"), 5)
         self.assertEqual(ranking.count("😮‍💨 Escapou por pouco"), 1)
         self.assertEqual(ranking.count("🧊 Gelado"), 3)
         self.assertEqual(ranking.count("🏮 Pior do racha"), 1)
-        for comum in ["Unanimidade", "Já votou", "Misterioso"]:
-            self.assertNotIn(comum, ranking)
+        self.assertEqual(ranking.count("🕵️ Misterioso"), 1)
+        self.assertEqual(ranking.count("🎯 Unanimidade"), 7)
+        self.assertNotIn("Já votou", ranking)
         self.assertIn("😮‍💨 Escapou por pouco", ranking.split("Só o básico")[1].split("</section>")[0])
         self.assertIn("🏮 Pior do racha", ranking.split("Zona de rebaixamento")[1])
 
@@ -768,25 +774,25 @@ class FluxoTest(SimpleTestCase):
             "d": ["Misterioso"],  # nota de 1 dos 4 que votaram
             "e": sorted(["Campeão da última semana", "Em baixa", "Pior do racha", "Gelado", "Unanimidade"]),
         })
-        # só aparece a mais rara de cada um (a que menos gente tem; empate pela ordem fixa)
-        self.assertEqual({pid: e["tag"]["texto"] for pid, e in extras.items()}, {
-            "a": "Craque da galera",  # Craque, Carrasco e Quente: só ele tem, e Craque vem antes na ordem
-            "b": "Coração mole",      # só ele é Coração mole (Em alta e Já levou 10: dois têm)
-            "c": "Mediano",           # só ele é Mediano (Unanimidade: três têm; Já votou fica por último)
-            "d": "Misterioso",
-            "e": "Pior do racha",     # empata com Campeão, Em baixa e Gelado (só ele tem): Pior vem antes na ordem
+        # só aparecem as duas mais raras de cada um (as que menos gente tem; empate pela ordem fixa)
+        self.assertEqual({pid: [t["texto"] for t in e["mostrar"]] for pid, e in extras.items()}, {
+            "a": ["Craque da galera", "Carrasco"],  # Craque, Carrasco e Quente: só ele tem; vale a ordem
+            "b": ["Coração mole", "Polêmico"],      # só ele tem essas (Em alta e Já levou 10: dois têm)
+            "c": ["Mediano", "Unanimidade"],        # Mediano só ele; Unanimidade, três; Já votou fica de fora
+            "d": ["Misterioso"],
+            "e": ["Pior do racha", "Campeão da última semana"],  # empata com Em baixa e Gelado: vale a ordem
         })
         self.assertEqual({pid: (e["mov"] or {}).get("texto") for pid, e in extras.items()},
                          {"a": "▲3", "b": "▲3", "c": "▼1", "d": None, "e": "▼4"})
         # "Já votou" só aparece para quem não tem outra tag
         so_votou = destaques([linha("a", [5]), linha("b", [6])], {"a", "b"}, [])
-        self.assertEqual(so_votou["b"]["tag"]["texto"], "Já votou")
-        self.assertEqual(so_votou["a"]["tag"]["texto"], "Craque da galera")
+        self.assertEqual([t["texto"] for t in so_votou["b"]["mostrar"]], ["Já votou"])
+        self.assertEqual([t["texto"] for t in so_votou["a"]["mostrar"]], ["Craque da galera"])
         # sem histórico: sem setas; o 1º continua coroado e o último continua o pior do racha
         extras = destaques(ranking, set(), [])
-        self.assertEqual(extras["a"]["tag"]["texto"], "Craque da galera")
+        self.assertEqual(extras["a"]["mostrar"][0]["texto"], "Craque da galera")
         self.assertTrue(all(e["mov"] is None for e in extras.values()))
-        self.assertEqual(extras["e"]["tag"]["texto"], "Pior do racha")
+        self.assertEqual(extras["e"]["mostrar"][0]["texto"], "Pior do racha")
         # com 3 ou menos, o último está no pódio: não ganha "Pior do racha"
         self.assertNotIn("Pior do racha", str(destaques(ranking[:3], set(), [])))
         # Escapou por pouco: o primeiro acima dos 4 da zona de rebaixamento, nunca no pódio

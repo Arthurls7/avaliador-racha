@@ -4,6 +4,6 @@
   <span class="info">
     <span class="nome-linha"><strong class="nome">{{ r.pessoa.nome }}</strong>
       {% if r.mov %}<span class="mov {{ r.mov.tipo }}" title="{{ r.mov.titulo }}">{{ r.mov.texto }}</span>{% endif %}</span>
-    {% if r.tag %}<span class="tags"><span class="tag {{ r.tag.tipo }}">{{ r.tag.emoji }} {{ r.tag.texto }}</span></span>{% endif %}
+    {% if r.mostrar %}<span class="tags">{% for t in r.mostrar %}<span class="tag {{ t.tipo }}">{{ t.emoji }} {{ t.texto }}</span>{% endfor %}</span>{% endif %}
   </span>
 </li>

@@ -19,8 +19,10 @@
   .degrau .nome { margin: 9px 0 2px; font-size: .92rem; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; }
   .degrau.p1 .nome { font-size: 1rem; }
   .degrau .mov { margin-bottom: 2px; }
-  .degrau .tags { justify-content: center; margin: 2px 0 0; }
-  .degrau .tag { white-space: normal; text-align: center; }
+  .degrau .tags { justify-content: center; gap: 3px; margin: 2px 0 0; }
+  /* tag que quebra de linha fica um retângulo arredondado, não um balão */
+  .degrau .tag { white-space: normal; text-align: center; justify-content: center; border-radius: 8px;
+                 padding: 2px 6px; line-height: 1.25; }
   .base { width: 100%; display: grid; place-items: center; margin-top: 8px; border-radius: 12px 12px 4px 4px;
           font-size: 1.3rem; }
   .p1 .base { height: 58px; background: linear-gradient(180deg, #fff4c9, #fde68f); }
@@ -35,7 +37,7 @@
   .lista-ranking .pos { width: 2.4rem; flex: none; text-align: center; font-size: 1.15rem; font-weight: 900; color: var(--suave); }
   .lista-ranking .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
   .lista-ranking .nome { overflow-wrap: anywhere; }
-  .lista-ranking .tag { max-width: 100%; white-space: normal; }  /* em tela estreita, a tag quebra em vez de estourar */
+  .lista-ranking .tag { max-width: 100%; white-space: normal; line-height: 1.25; }  /* em tela estreita, a tag quebra em vez de estourar */
   @media (max-width: 360px) { .lista-ranking li { gap: 8px; } .lista-ranking .pos { width: 2.1rem; } }
   .nome-linha { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .mov { display: inline-block; padding: 0 6px; border-radius: 6px; font-size: .75rem; font-weight: 900; }
@@ -74,7 +76,7 @@
         <span class="foto">{% if r.posicao == 1 %}<span class="coroa" aria-hidden="true">👑</span>{% endif %}{% include "votacao/_avatar.html" with p=r.pessoa tamanho="grande" %}</span>
         <strong class="nome">{{ r.pessoa.nome }}</strong>
         {% if r.mov %}<span class="mov {{ r.mov.tipo }}" title="{{ r.mov.titulo }}">{{ r.mov.texto }}</span>{% endif %}
-        {% if r.tag %}<span class="tags"><span class="tag {{ r.tag.tipo }}">{{ r.tag.emoji }} {{ r.tag.texto }}</span></span>{% endif %}
+        {% if r.mostrar %}<span class="tags">{% for t in r.mostrar|slice:":1" %}<span class="tag {{ t.tipo }}">{{ t.emoji }} {{ t.texto }}</span>{% endfor %}</span>{% endif %}
         <div class="base">{{ r.medalha }}</div>
       </div>
     {% endfor %}
@@ -140,7 +142,7 @@
         <li><span class="tag suave">🗳️ Já votou</span> já deu as notas desta semana</li>
         <li><span class="mov sobe">▲2</span> <span class="mov desce">▼1</span> quanto subiu ou desceu desde a última semana</li>
       </ul>
-      <p class="suave pequeno">Cada um mostra só uma tag: a mais rara que tem nesta semana (a que menos gente tem).
+      <p class="suave pequeno">Cada um mostra até duas tags (no pódio, só uma): as mais raras que tem nesta semana (as que menos gente tem).
         Na lista acima, as tags vão das mais raras para as mais comuns; "Já votou" só aparece para quem não tem outra.</p>
     </details>
   </section>
