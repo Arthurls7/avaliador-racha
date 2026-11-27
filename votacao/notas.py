@@ -2,7 +2,8 @@
 
 - Cada pessoa dá uma nota de 1 a 10 (números inteiros) para cada um dos outros jogadores da semana,
   ou marca "Não conheço" (aí a opinião dela sobre aquele jogador não entra na conta).
-- Resultado de cada jogador: média das notas que ele recebeu.
+- Resultado de cada jogador: média das notas que ele recebeu. Quem recebeu 10 notas ou mais fica sem a
+  maior e a menor (uma de cada), para uma nota fora da curva não pesar demais.
 - Ordem do ranking: maior média; no empate, quem recebeu a maior nota; se ainda empatar, ordem alfabética.
   Assim cada um tem uma posição só (1º, 2º, 3º...), sem posições repetidas.
 - Avaliações feitas antes, na escala de 0 a 5 (sem "escala": 10 no registro), continuam valendo:
@@ -14,6 +15,7 @@ from .armazenamento import ordem_alfabetica
 ESCALA = 10
 OPCOES_NOTA = range(1, ESCALA + 1)  # 1, 2, ..., 10
 NAO_CONHECO = "nao-conheco"
+DESCARTE_A_PARTIR_DE = 10  # com tantas notas recebidas ou mais, a maior e a menor não entram na média
 
 
 def escala_nova(registro):
@@ -33,6 +35,13 @@ def ler_nota(texto):
     except (TypeError, ValueError):
         return None
     return valor if valor in OPCOES_NOTA else None
+
+
+def contadas(notas):
+    """As notas que entram na média: de quem recebeu DESCARTE_A_PARTIR_DE ou mais, sai uma maior e uma menor."""
+    if len(notas) < DESCARTE_A_PARTIR_DE:
+        return list(notas)
+    return sorted(notas)[1:-1]
 
 
 def _media(valores):
@@ -61,16 +70,22 @@ def resultados(pessoas, avaliacoes):
             if pid in recebidas and pid != avaliador:
                 recebidas[pid].append(na_escala(valor, registro))
 
-    linhas = [{
-        "pessoa": p,
-        "id": p["id"],
-        "nome": p["nome"],
-        "nota": _media(recebidas[p["id"]]),
-        "maior": max(recebidas[p["id"]], default=None),
-        "qtd": len(recebidas[p["id"]]),
-        "recebidas": recebidas[p["id"]],
-        "avaliou": avaliacoes.get(p["id"]),
-    } for p in pessoas]
+    linhas = []
+    for p in pessoas:
+        todas = recebidas[p["id"]]
+        valem = contadas(todas)
+        linhas.append({
+            "pessoa": p,
+            "id": p["id"],
+            "nome": p["nome"],
+            "nota": _media(valem),
+            "maior": max(valem, default=None),  # desempate: a maior das notas que contam
+            "qtd": len(todas),                  # quantas recebeu (contando as descartadas)
+            "descartadas": len(todas) - len(valem),
+            "recebidas": todas,
+            "contadas": valem,
+            "avaliou": avaliacoes.get(p["id"]),
+        })
     linhas.sort(key=_ordem_do_ranking)
     return linhas
 

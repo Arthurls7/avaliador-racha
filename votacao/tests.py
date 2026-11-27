@@ -15,7 +15,7 @@ from django.urls import reverse
 
 from . import armazenamento as arm
 from .destaques import destaques
-from .notas import ler_nota, na_escala, resultados
+from .notas import contadas, ler_nota, na_escala, resultados
 from .sorteio import (GrupoNaoCabe, NaoDeuParaSeparar, RegrasEmConflito, agrupar, diferenca, forcas, sortear, tamanhos,
                       tamanhos_por_quantidade)
 from .trocas import aplicar, comparar, descrever
@@ -181,6 +181,30 @@ class NotasTest(SimpleTestCase):
         self.assertEqual([ler_nota(v) for v in ["1", "7", "10"]], [1, 7, 10])
         for invalido in ["0", "11", "-1", "2.5", "", None, "abc"]:
             self.assertIsNone(ler_nota(invalido))
+
+    def test_com_10_notas_ou_mais_sai_a_maior_e_a_menor(self):
+        pessoas = [{"id": pid, "nome": pid} for pid in ["alvo"] + [f"v{i}" for i in range(12)]]
+
+        def linha_do_alvo(notas):
+            avaliacoes = {f"v{i}": {"escala": 10, "notas": {"alvo": n}} for i, n in enumerate(notas)}
+            return next(l for l in resultados(pessoas, avaliacoes) if l["id"] == "alvo")
+
+        # 9 notas: todas contam
+        nove = [1, 6, 6, 6, 6, 6, 6, 6, 10]
+        linha = linha_do_alvo(nove)
+        self.assertAlmostEqual(linha["nota"], sum(nove) / 9)
+        self.assertEqual((linha["qtd"], linha["descartadas"], linha["maior"]), (9, 0, 10))
+        # 10 notas: o 10 e o 1 saem da média e do desempate, mas continuam nas recebidas
+        dez = [1, 6, 6, 6, 6, 6, 6, 6, 6, 10]
+        linha = linha_do_alvo(dez)
+        self.assertEqual(linha["nota"], 6)
+        self.assertEqual((linha["qtd"], linha["descartadas"], linha["maior"]), (10, 2, 6))
+        self.assertEqual(sorted(linha["recebidas"]), sorted(dez))
+        self.assertEqual(linha["contadas"], [6] * 8)
+        # notas repetidas: sai só uma de cada ponta
+        self.assertEqual(contadas([10, 10, 1, 1, 5, 5, 5, 5, 5, 5]), [1, 5, 5, 5, 5, 5, 5, 10])
+        self.assertEqual(contadas([7, 3]), [7, 3])
+        self.assertEqual(contadas([]), [])
 
     def test_avaliacao_antiga_de_0_a_5_vira_1_a_10(self):
         antiga, nova = {}, {"escala": 10}
@@ -649,8 +673,11 @@ class FluxoTest(SimpleTestCase):
         # tags
         ranking = self.sem_legenda(resposta)
         self.assertEqual(ranking.count("👑 Craque da galera"), 1)
-        self.assertEqual(ranking.count("🗳️ Já votou"), 1)  # a Ana (4ª); no pódio aparece só a tag principal
-        self.assertEqual(ranking.count("🏮 Pior do racha"), 1)  # a Ana, a última
+        # cada um mostra só a tag mais rara: a Ana (última) também é Carrasco e já votou, mas aparece "Pior do racha"
+        self.assertEqual(ranking.count("🏮 Pior do racha"), 1)
+        self.assertNotIn("Carrasco", ranking)
+        self.assertNotIn("Já votou", ranking)
+        self.assertEqual(ranking.count('class="tag '), 2)  # Bruno e Ana; Caio e Davi não têm tag
         self.assertNotIn("Estreante", resposta.content.decode())  # essa tag não existe mais
         self.assertNotIn('class="mov', ranking)  # nem setas de sobe/desce
         self.assertContains(resposta, "O que significam as tags?")
@@ -658,8 +685,10 @@ class FluxoTest(SimpleTestCase):
     def test_ranking_publico_secoes(self):
         arm.adicionar_pessoas(["Eva", "Fabio", "Gil", "Hugo", "Iris", "Juca", "Kiko", "Lia"])  # 12 jogadores
         ids = [p["id"] for p in arm.jogadores()]
-        for quem in ids:  # cada um recebe a mesma nota de todo mundo: Ana 1; Bruno 1,75; ...; Lia 9,25
-            arm.salvar_avaliacao(quem, {"escala": 10, "notas": {o: 1 + ids.index(o) * 0.75 for o in ids if o != quem}})
+        for i, quem in enumerate(ids):  # cada um recebe a mesma nota de todo mundo: Ana 1; Bruno 1,75; ...; Lia 9,25
+            # ...mas de Gil em diante ninguém conhece a Ana (ela fica com 5 notas de 11: Misteriosa)
+            arm.salvar_avaliacao(quem, {"escala": 10, "notas": {o: 1 + ids.index(o) * 0.75 for o in ids
+                                                                if o != quem and not (o == "ana" and i >= 6)}})
         resposta = self.client.get(reverse("votacao:ranking"))
         self.assertEqual([p for p, _ in self.posicoes(resposta)], list(range(1, 13)))
         pagina = resposta.content.decode()
@@ -675,19 +704,21 @@ class FluxoTest(SimpleTestCase):
         self.assertEqual(self.posicoes(resposta)[-1], (12, "Ana"))
         self.assertContains(resposta, "🎉 Todo mundo já votou!")
         ranking = self.sem_legenda(resposta)
-        self.assertIn("🌟 Todo mundo conhece", ranking)
-        self.assertIn("🎯 Unanimidade", ranking)
-        # Lia 9,25 (1ª, no pódio só "Craque"), Kiko 8,5 e Juca 7,75 quentes; de Iris (7) a Eva (4) medianos;
-        # de Davi (3,25) a Ana (1) gelados; a Ana é a pior do racha
+        self.assertNotContains(resposta, "Todo mundo conhece")  # essa tag não existe mais
+        # cada um mostra só a tag mais rara que tem. Todo mundo é Unanimidade e já votou: essas não aparecem.
+        # Lia (1ª) é a craque; Kiko e Juca, quentes (3 têm); Iris a Fabio, medianos (5 têm); Eva (8ª) escapou por
+        # pouco da zona; Davi, Caio e Bruno, gelados (4 têm); a Ana é a pior do racha (e também Misteriosa)
+        self.assertEqual(ranking.count('class="tag '), 12)  # uma por pessoa
+        self.assertEqual(ranking.count("👑 Craque da galera"), 1)
         self.assertEqual(ranking.count("🔥 Quente"), 2)
-        self.assertEqual(ranking.count("😐 Mediano"), 5)
-        self.assertEqual(ranking.count("🧊 Gelado"), 4)
+        self.assertEqual(ranking.count("😐 Mediano"), 4)
+        self.assertEqual(ranking.count("😮‍💨 Escapou por pouco"), 1)
+        self.assertEqual(ranking.count("🧊 Gelado"), 3)
         self.assertEqual(ranking.count("🏮 Pior do racha"), 1)
+        for comum in ["Unanimidade", "Já votou", "Misterioso"]:
+            self.assertNotIn(comum, ranking)
+        self.assertIn("😮‍💨 Escapou por pouco", ranking.split("Só o básico")[1].split("</section>")[0])
         self.assertIn("🏮 Pior do racha", ranking.split("Zona de rebaixamento")[1])
-        # na lista, no máximo 4 tags por pessoa
-        itens = re.findall(r'<li data-posicao="\d+">.*?</li>', ranking, re.S)
-        self.assertEqual(len(itens), 9)  # do 4º ao 12º
-        self.assertEqual([item.count('class="tag ') for item in itens], [4] * 9)  # a Ana tem 5, mas só 4 aparecem
 
     def test_ranking_publico_quem_nao_tem_nota(self):
         arm.salvar_avaliacao("ana", {"notas": {"bruno": 5}, "nao_conhece": ["caio", "davi"]})
@@ -720,33 +751,76 @@ class FluxoTest(SimpleTestCase):
 
     def test_destaques(self):
         def linha(pid, recebidas):
-            return {"id": pid, "qtd": len(recebidas), "recebidas": recebidas}
+            return {"id": pid, "qtd": len(recebidas), "recebidas": recebidas, "contadas": recebidas}
+
+        def todas(extras):
+            return {pid: sorted(t["texto"] for t in e["tags"]) for pid, e in extras.items()}
 
         ranking = [linha("a", [9, 9, 10]), linha("b", [10, 2, 5, 9]), linha("c", [5, 6, 7]), linha("d", [3]),
                    linha("e", [1, 2, 3])]
         semana = {"ranking": [{"id": "e"}, {"id": "c"}, {"id": "x"}, {"id": "a"}, {"id": "b"}]}
-        extras = destaques(ranking, {"a", "b", "c", "f"}, [semana])
-        texto = {pid: [t["texto"] for t in e["tags"]] for pid, e in extras.items()}
-        self.assertEqual(texto["a"], ["Craque da galera", "Em alta", "Quente", "Unanimidade", "Todo mundo conhece",
-                                      "Já votou"])
-        self.assertEqual(texto["b"], ["Em alta", "Polêmico", "Todo mundo conhece", "Já votou"])
-        self.assertEqual(texto["c"], ["Mediano", "Unanimidade", "Todo mundo conhece", "Já votou"])
-        self.assertEqual(texto["d"], ["Misterioso"])  # nota de 1 dos 4 que votaram
-        self.assertEqual(texto["e"], ["Campeão da última semana", "Em baixa", "Pior do racha", "Gelado", "Unanimidade"])
+        dadas = {"a": [2, 3, 9, 1], "b": [8, 9, 10, 4], "c": [4, 5, 8, 9], "f": [1, 1, 1]}
+        extras = destaques(ranking, {"a", "b", "c", "f"}, [semana], dadas)
+        self.assertEqual(todas(extras), {
+            "a": sorted(["Craque da galera", "Em alta", "Carrasco", "Já levou 10", "Quente", "Unanimidade", "Já votou"]),
+            "b": sorted(["Em alta", "Coração mole", "Já levou 10", "Polêmico", "Já votou"]),
+            "c": sorted(["Mediano", "Unanimidade", "Já votou"]),  # metade alta, metade baixa: nem um nem outro
+            "d": ["Misterioso"],  # nota de 1 dos 4 que votaram
+            "e": sorted(["Campeão da última semana", "Em baixa", "Pior do racha", "Gelado", "Unanimidade"]),
+        })
+        # só aparece a mais rara de cada um (a que menos gente tem; empate pela ordem fixa)
+        self.assertEqual({pid: e["tag"]["texto"] for pid, e in extras.items()}, {
+            "a": "Craque da galera",  # Craque, Carrasco e Quente: só ele tem, e Craque vem antes na ordem
+            "b": "Coração mole",      # só ele é Coração mole (Em alta e Já levou 10: dois têm)
+            "c": "Mediano",           # só ele é Mediano (Unanimidade: três têm; Já votou fica por último)
+            "d": "Misterioso",
+            "e": "Pior do racha",     # empata com Campeão, Em baixa e Gelado (só ele tem): Pior vem antes na ordem
+        })
         self.assertEqual({pid: (e["mov"] or {}).get("texto") for pid, e in extras.items()},
                          {"a": "▲3", "b": "▲3", "c": "▼1", "d": None, "e": "▼4"})
-        self.assertNotIn("Estreante", str(extras))
+        # "Já votou" só aparece para quem não tem outra tag
+        so_votou = destaques([linha("a", [5]), linha("b", [6])], {"a", "b"}, [])
+        self.assertEqual(so_votou["b"]["tag"]["texto"], "Já votou")
+        self.assertEqual(so_votou["a"]["tag"]["texto"], "Craque da galera")
         # sem histórico: sem setas; o 1º continua coroado e o último continua o pior do racha
         extras = destaques(ranking, set(), [])
-        self.assertEqual(extras["a"]["tags"][0]["texto"], "Craque da galera")
+        self.assertEqual(extras["a"]["tag"]["texto"], "Craque da galera")
         self.assertTrue(all(e["mov"] is None for e in extras.values()))
-        self.assertIn("Pior do racha", [t["texto"] for t in extras["e"]["tags"]])
+        self.assertEqual(extras["e"]["tag"]["texto"], "Pior do racha")
         # com 3 ou menos, o último está no pódio: não ganha "Pior do racha"
         self.assertNotIn("Pior do racha", str(destaques(ranking[:3], set(), [])))
+        # Escapou por pouco: o primeiro acima dos 4 da zona de rebaixamento, nunca no pódio
+        posicoes = [linha(f"p{i}", [5]) for i in range(1, 13)]
+        escapou = [pid for pid, e in destaques(posicoes, set(), []).items()
+                   if "Escapou por pouco" in str(e["tags"])]
+        self.assertEqual(escapou, ["p8"])
+        self.assertNotIn("Escapou por pouco", str(destaques(posicoes[:7], set(), [])))
+        # com 10 notas ou mais, as faixas olham só as que contam; "Já levou 10" vale mesmo se o 10 saiu da média
+        dez = {"id": "z", "qtd": 10, "recebidas": [10] + [5] * 8 + [1], "contadas": [5] * 8}
+        tags = [t["texto"] for t in destaques([dez], set(), [])["z"]["tags"]]
+        self.assertIn("Mediano", tags)
+        self.assertIn("Unanimidade", tags)
+        self.assertIn("Já levou 10", tags)
         # notas espalhadas entre as faixas: nem Quente, nem Mediano, nem Gelado
         tags = str(destaques([linha("a", [3, 5, 8])], set(), []))
         for faixa in ["Quente", "Mediano", "Gelado"]:
             self.assertNotIn(faixa, tags)
+
+    def test_ranking_carrasco_e_coracao_mole(self):
+        arm.adicionar_pessoas(["Eva"])
+        arm.salvar_avaliacao("caio", {"escala": 10, "notas": {"ana": 6, "bruno": 6, "davi": 9, "eva": 1}})
+        # a Ana dá quase tudo baixo (3 de 4 notas são 4 ou menos) e o Bruno, quase tudo alto (3 de 4 são 8 ou mais)
+        arm.salvar_avaliacao("ana", {"escala": 10, "notas": {"bruno": 3, "caio": 2, "davi": 4, "eva": 9}})
+        arm.salvar_avaliacao("bruno", {"escala": 10, "notas": {"ana": 8, "caio": 9, "davi": 10, "eva": 1}})
+        resposta = self.client.get(reverse("votacao:ranking"))
+        # Davi 7,67; Ana 7; Caio 5,5; Bruno 4,5; Eva 3,67
+        self.assertEqual(self.posicoes(resposta), [(1, "Davi"), (2, "Ana"), (3, "Caio"), (4, "Bruno"), (5, "Eva")])
+        pagina = self.sem_legenda(resposta)
+        ana = re.search(r'data-posicao="2">.*?<div class="base">', pagina, re.S).group(0)
+        bruno = re.search(r'<li data-posicao="4">.*?</li>', pagina, re.S).group(0)
+        self.assertIn("🔪 Carrasco", ana)
+        self.assertIn("🍬 Coração mole", bruno)
+        self.assertEqual((pagina.count("Carrasco"), pagina.count("Coração mole")), (1, 1))
 
     def test_sorteio_por_numero_de_linhas_e_limite(self):
         self.entrar()
@@ -1214,31 +1288,6 @@ class FluxoTest(SimpleTestCase):
         link = re.search(r'href="https://wa.me/\?text=([^"]+)"', resposta.content.decode()).group(1)
         self.assertEqual(unquote(link), texto)
 
-    def test_linhas_lista_compacta(self):
-        arm.salvar_sorteio([["ana", "bruno"], ["caio", "davi"]], 2, True)
-        arm.publicar_linhas()
-        url = reverse("votacao:linhas")
-        completa = self.client.get(url)
-        self.assertContains(completa, 'class="cartao faixa-linha"', count=2)
-        self.assertNotContains(completa, 'class="cartao compacta"')
-        self.assertContains(completa, f'href="{url}?ver=completa" class="ativa" aria-current="page">🖼️ Com fotos</a>')
-        self.assertContains(completa, f'href="{url}?ver=compacta">📃 Lista compacta</a>')
-
-        compacta = self.client.get(url + "?ver=compacta")
-        self.assertContains(compacta, 'class="cartao compacta"')
-        self.assertNotContains(compacta, 'class="cartao faixa-linha"')
-        self.assertNotContains(compacta, 'class="avatar')  # sem fotos
-        self.assertContains(compacta, "Ana, Bruno</p>")
-        self.assertContains(compacta, "Caio, Davi</p>")
-        self.assertContains(compacta, "📋 Copiar linhas")  # copiar e mandar no WhatsApp continuam, no fim
-        self.assertContains(compacta, f'href="{url}?ver=compacta" class="ativa" aria-current="page">')
-
-        # o celular lembra a escolha até trocar de novo
-        self.assertContains(self.client.get(url), 'class="cartao compacta"')
-        self.client.get(url + "?ver=completa")
-        self.assertContains(self.client.get(url), 'class="cartao faixa-linha"', count=2)
-        self.assertContains(self.client.get(url + "?ver=qualquer"), 'class="cartao faixa-linha"', count=2)
-
     def test_barra_de_progresso_no_inicio(self):
         resposta = self.client.get(reverse("votacao:inicio"))
         self.assertContains(resposta, "🗳️ 0 de 4 já votaram")
@@ -1304,6 +1353,18 @@ class FluxoTest(SimpleTestCase):
         self.assertContains(resposta, "🧹 Histórico apagado.")
         self.assertEqual(arm.historico(), [])
         self.assertContains(resposta, "Nenhuma semana fechada ainda")
+
+    def test_painel_mostra_notas_descartadas(self):
+        nomes = [f"Pessoa {i}" for i in range(10)]
+        arm.adicionar_pessoas(nomes)
+        ids = [p["id"] for p in arm.jogadores() if p["id"].startswith("pessoa")]
+        for i, quem in enumerate(ids):  # dez notas para a Ana: 1, 6 (oito vezes) e 10
+            arm.salvar_avaliacao(quem, {"escala": 10, "notas": {"ana": [1, 6, 6, 6, 6, 6, 6, 6, 6, 10][i]}})
+        self.entrar()
+        resposta = self.client.get(reverse("votacao:painel"))
+        self.assertContains(resposta, "<strong>6,00</strong><small>10 notas, 2 fora</small>", html=False)
+        self.assertContains(resposta, "com 10 notas ou mais, a maior e a menor ficam de fora")
+        self.assertContains(self.client.get(reverse("votacao:ranking")), "com 10 notas ou mais, a maior e a menor não contam")
 
     def test_painel_salvar_cadastro_com_foto(self):
         self.entrar()

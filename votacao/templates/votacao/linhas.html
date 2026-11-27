@@ -5,61 +5,30 @@
   .linhas h2 { margin-bottom: 6px; }
   .linhas .quantos { margin-left: auto; font-size: .8rem; font-weight: 700; color: var(--suave); }
   .pedir-troca { margin: 4px 0 6px; }
-
-  /* com fotos | lista compacta */
-  .modo-ver { display: inline-flex; gap: 4px; padding: 4px; margin: 0 0 14px; border-radius: 999px;
-              background: #e8eee6; }
-  .modo-ver a { padding: 7px 14px; border-radius: 999px; font-size: .88rem; font-weight: 700; color: var(--suave);
-                text-decoration: none; white-space: nowrap; }
-  .modo-ver a.ativa { background: #fff; color: var(--verde-escuro); box-shadow: var(--sombra); }
-
-  .compacta { padding-top: 6px; padding-bottom: 6px; }
-  .compacta p { margin: 0; padding: 10px 0; border-bottom: 1px solid var(--borda); line-height: 1.5; }
-  .compacta p:last-child { border-bottom: 0; }
-  .compacta .bolinha { display: inline-block; width: .75em; height: .75em; margin-right: 6px; border-radius: 50%;
-                       vertical-align: .02em; }
 {% endblock %}
 {% block menu %}{% include "votacao/_menu_publico.html" with aba="linhas" %}{% endblock %}
 {% block conteudo %}
 {% if linhas %}
   <h1>👥 Linhas</h1>
   <p class="suave">Sorteadas em {{ data }}. Bom jogo! ⚽</p>
-  {% url 'votacao:linhas' as url_linhas %}
-  <nav class="modo-ver" aria-label="Jeito de ver as linhas">
-    <a href="{{ url_linhas }}?ver=completa"{% if not compacta %} class="ativa" aria-current="page"{% endif %}>🖼️ Com fotos</a>
-    <a href="{{ url_linhas }}?ver=compacta"{% if compacta %} class="ativa" aria-current="page"{% endif %}>📃 Lista compacta</a>
-  </nav>
-
-  {% if compacta %}
-    {# só os nomes, para ver tudo de uma vez (e tirar print); copiar e mandar no WhatsApp ficam no fim #}
-    <section class="cartao compacta">
-      {% for linha in linhas %}
-        <p><strong><span class="bolinha" style="background: {{ linha.cor }}"></span>Linha {{ linha.numero }}</strong>
-          <span class="suave">({{ linha.jogadores|length }})</span><br>
-          {% for p in linha.jogadores %}{{ p.nome }}{% if not forloop.last %}, {% endif %}{% endfor %}</p>
-      {% endfor %}
-    </section>
-    {% include "votacao/_compartilhar_linhas.html" with texto=texto_whatsapp %}
-  {% else %}
-    {% include "votacao/_compartilhar_linhas.html" with texto=texto_whatsapp %}
-    {% if trocas_ativas %}
-      <div class="acoes pedir-troca">
-        <a class="botao secundario" href="{% url 'votacao:sugerir_troca' %}">🔄 Sugerir troca de linha</a>
-      </div>
-    {% endif %}
-    <div class="linhas">
-      {% for linha in linhas %}
-        <section class="cartao faixa-linha" style="--cor: {{ linha.cor }}">
-          <h2>Linha {{ linha.numero }} <span class="quantos">{{ linha.jogadores|length }} jogador{{ linha.jogadores|length|pluralize:"es" }}</span></h2>
-          <ul class="lista-pessoas">
-            {% for p in linha.jogadores %}
-              <li>{% include "votacao/_avatar.html" with p=p tamanho="pequeno" %}<span class="nome">{{ p.nome }}</span></li>
-            {% endfor %}
-          </ul>
-        </section>
-      {% endfor %}
+  {% include "votacao/_compartilhar_linhas.html" with texto=texto_whatsapp %}
+  {% if trocas_ativas %}
+    <div class="acoes pedir-troca">
+      <a class="botao secundario" href="{% url 'votacao:sugerir_troca' %}">🔄 Sugerir troca de linha</a>
     </div>
   {% endif %}
+  <div class="linhas">
+    {% for linha in linhas %}
+      <section class="cartao faixa-linha" style="--cor: {{ linha.cor }}">
+        <h2>Linha {{ linha.numero }} <span class="quantos">{{ linha.jogadores|length }} jogador{{ linha.jogadores|length|pluralize:"es" }}</span></h2>
+        <ul class="lista-pessoas">
+          {% for p in linha.jogadores %}
+            <li>{% include "votacao/_avatar.html" with p=p tamanho="pequeno" %}<span class="nome">{{ p.nome }}</span></li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endfor %}
+  </div>
 {% else %}
   <div class="cartao vazio">
     <div class="grande">🎲</div>

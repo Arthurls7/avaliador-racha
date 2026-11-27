@@ -62,7 +62,8 @@
 {% block conteudo %}
 <div class="cabecalho-ranking">
   <h1>🏆 Ranking da galera</h1>
-  <p class="suave">Pela média das notas que a galera deu. Ninguém vê a nota de ninguém. 😉</p>
+  <p class="suave">Pela média das notas que a galera deu (com 10 notas ou mais, a maior e a menor não contam).
+    Ninguém vê a nota de ninguém. 😉</p>
 </div>
 {% include "votacao/_progresso.html" %}
 
@@ -73,7 +74,7 @@
         <span class="foto">{% if r.posicao == 1 %}<span class="coroa" aria-hidden="true">👑</span>{% endif %}{% include "votacao/_avatar.html" with p=r.pessoa tamanho="grande" %}</span>
         <strong class="nome">{{ r.pessoa.nome }}</strong>
         {% if r.mov %}<span class="mov {{ r.mov.tipo }}" title="{{ r.mov.titulo }}">{{ r.mov.texto }}</span>{% endif %}
-        {% if r.tags %}<span class="tags">{% for t in r.tags|slice:":1" %}<span class="tag {{ t.tipo }}">{{ t.emoji }} {{ t.texto }}</span>{% endfor %}</span>{% endif %}
+        {% if r.tag %}<span class="tags"><span class="tag {{ r.tag.tipo }}">{{ r.tag.emoji }} {{ r.tag.texto }}</span></span>{% endif %}
         <div class="base">{{ r.medalha }}</div>
       </div>
     {% endfor %}
@@ -124,20 +125,23 @@
       <summary>O que significam as tags?</summary>
       <ul>
         <li><span class="tag ouro">👑 Craque da galera</span> 1º lugar. Se já era o 1º na semana passada: <span class="tag ouro">👑 Segue no topo</span></li>
-        <li><span class="tag ouro">🏅 Campeão da última semana</span> foi o 1º na última semana fechada</li>
-        <li><span class="tag quente">🚀 Em alta</span> <span class="tag frio">📉 Em baixa</span> subiu ou caiu 3 posições ou mais desde a última semana</li>
         <li><span class="tag lanterna">🏮 Pior do racha</span> o último da tabela</li>
-        <li><span class="tag quente">🔥 Quente</span> só recebeu notas acima de 7</li>
-        <li><span class="tag neutro">😐 Mediano</span> só recebeu notas de 4 a 7</li>
-        <li><span class="tag frio">🧊 Gelado</span> só recebeu notas abaixo de 4</li>
-        <li><span class="tag alvo">🎯 Unanimidade</span> todo mundo deu notas parecidas</li>
+        <li><span class="tag ouro">🏅 Campeão da última semana</span> foi o 1º na última semana fechada</li>
+        <li><span class="tag neutro">😮‍💨 Escapou por pouco</span> logo acima da zona de rebaixamento</li>
+        <li><span class="tag lanterna">🔪 Carrasco</span> mais da metade das notas que deu foram 4 ou menos</li>
+        <li><span class="tag doce">🍬 Coração mole</span> mais da metade das notas que deu foram 8 ou mais</li>
         <li><span class="tag quente">🌶️ Polêmico</span> uns acham craque, outros nem tanto</li>
-        <li><span class="tag alvo">🌟 Todo mundo conhece</span> recebeu nota de todos que votaram</li>
+        <li><span class="tag quente">🚀 Em alta</span> <span class="tag frio">📉 Em baixa</span> subiu ou caiu 3 posições ou mais desde a última semana</li>
         <li><span class="tag neutro">🕵️ Misterioso</span> pouca gente conhece: recebeu nota de menos da metade de quem votou</li>
+        <li><span class="tag quente">🔥 Quente</span> <span class="tag frio">🧊 Gelado</span> só recebeu notas acima de 7 / abaixo de 4</li>
+        <li><span class="tag ouro">💯 Já levou 10</span> recebeu pelo menos uma nota 10</li>
+        <li><span class="tag alvo">🎯 Unanimidade</span> todo mundo deu notas parecidas</li>
+        <li><span class="tag neutro">😐 Mediano</span> só recebeu notas de 4 a 7</li>
         <li><span class="tag suave">🗳️ Já votou</span> já deu as notas desta semana</li>
         <li><span class="mov sobe">▲2</span> <span class="mov desce">▼1</span> quanto subiu ou desceu desde a última semana</li>
       </ul>
-      <p class="suave pequeno">No pódio aparece só a tag principal de cada um; na lista, até 4.</p>
+      <p class="suave pequeno">Cada um mostra só uma tag: a mais rara que tem nesta semana (a que menos gente tem).
+        Na lista acima, as tags vão das mais raras para as mais comuns; "Já votou" só aparece para quem não tem outra.</p>
     </details>
   </section>
 {% endif %}

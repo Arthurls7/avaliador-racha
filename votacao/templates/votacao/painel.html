@@ -31,7 +31,7 @@
 <section class="cartao">
   <h2>🏁 Resultado da semana</h2>
   {% if linhas %}
-    <p class="suave">{{ ja_avaliaram }} de {{ linhas|length }} pessoas já avaliaram. A nota de cada um é a média das notas que recebeu.</p>
+    <p class="suave">{{ ja_avaliaram }} de {{ linhas|length }} pessoas já avaliaram. A nota de cada um é a média das notas que recebeu; com 10 notas ou mais, a maior e a menor ficam de fora.</p>
     <ol class="resultado">
       {% for l in linhas %}
         <li>
@@ -41,7 +41,7 @@
             <strong>{{ l.nome }}</strong>
             <span class="suave pequeno">{% if l.avaliou %}<span class="ok">✓</span> avaliou {{ l.avaliou_data }}{% else %}ainda não avaliou{% endif %}{% if not l.pessoa.joga %} · não joga esta semana{% endif %}</span>
           </span>
-          <span class="nota-final"><strong>{{ l.nota_fmt }}</strong><small>{{ l.qtd }} nota{{ l.qtd|pluralize }}</small></span>
+          <span class="nota-final"><strong>{{ l.nota_fmt }}</strong><small>{{ l.qtd }} nota{{ l.qtd|pluralize }}{% if l.descartadas %}, {{ l.descartadas }} fora{% endif %}</small></span>
         </li>
       {% endfor %}
     </ol>

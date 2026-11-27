@@ -13,9 +13,9 @@ from django.views.decorators.http import require_POST
 
 from . import armazenamento as arm
 from . import trocas
-from .destaques import destaques
+from .destaques import ZONA_REBAIXAMENTO, destaques
 from .notas import (ESCALA, NAO_CONHECO, OPCOES_NOTA, escala_nova, formatar, formatar_curto, ler_nota,
-                    resultados)
+                    na_escala, resultados)
 from .sorteio import (GrupoNaoCabe, NaoDeuParaSeparar, RegrasEmConflito, agrupar, diferenca, forcas, sortear,
                       tamanhos, tamanhos_por_quantidade)
 
@@ -34,8 +34,6 @@ MINUTOS_BLOQUEIO = 10
 # Sugestões de troca de linha pela galera (aba Linhas) e a aba "Trocas" do painel para aprovar.
 # Desligado: só o organizador ajusta as linhas, na aba Linhas do painel. Para religar, troque para True.
 TROCAS_ATIVAS = False
-ZONA_REBAIXAMENTO = 4  # os últimos do ranking público que ficam na "zona de rebaixamento"
-COOKIE_VER_LINHAS = "linhas_ver"  # "compacta" ou "completa": como a pessoa prefere ver as linhas públicas
 
 
 def _visual(pessoa):
@@ -178,21 +176,13 @@ def _linhas_publicadas():
 
 
 def ver_linhas(request):
-    """Linhas publicadas, com fotos ou numa lista compacta (?ver=compacta); o celular lembra a escolha."""
-    escolha = request.GET.get("ver")
-    if escolha not in ("completa", "compacta"):
-        escolha = None
     linhas, dados = _linhas_publicadas()
-    resposta = render(request, "votacao/linhas.html", {
+    return render(request, "votacao/linhas.html", {
         "linhas": [{"numero": i + 1, "cor": _cor_linha(i + 1), "jogadores": linha} for i, linha in enumerate(linhas)],
         "data": _data(dados),
         "trocas_ativas": TROCAS_ATIVAS,
         "texto_whatsapp": _texto_whatsapp(request, linhas, dados) if linhas else "",
-        "compacta": (escolha or request.COOKIES.get(COOKIE_VER_LINHAS)) == "compacta",
     })
-    if escolha:
-        resposta.set_cookie(COOKIE_VER_LINHAS, escolha, max_age=365 * 24 * 3600, samesite="Lax")
-    return resposta
 
 
 # ---------- sugestões de troca de linha (só quem está conectado, em fila; desligado com TROCAS_ATIVAS) ----------
@@ -269,7 +259,11 @@ def ver_ranking(request):
     com_nota = [linha for linha in linhas if linha["nota"] is not None]
     votaram = {p["id"] for p in todos if p["id"] in avaliacoes}
     semanas = arm.historico()
-    extras = destaques(com_nota, votaram, semanas)
+    ids = {p["id"] for p in todos}
+    # as notas que cada um deu (para o Carrasco e o Coração mole), só para quem está no ranking
+    dadas = {quem: [na_escala(v, registro) for pid, v in registro.get("notas", {}).items() if pid in ids and pid != quem]
+             for quem, registro in avaliacoes.items() if quem in ids}
+    extras = destaques(com_nota, votaram, semanas, dadas)
     ranking = [{"posicao": i, "medalha": MEDALHAS.get(i, ""), "pessoa": linha["pessoa"], **extras[linha["id"]]}
                for i, linha in enumerate(com_nota, start=1)]
     secoes = _secoes_do_ranking(ranking)
