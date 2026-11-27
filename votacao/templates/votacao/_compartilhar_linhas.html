@@ -1,0 +1,24 @@
+<div class="compartilhar">
+  <button type="button" class="botao secundario" data-copiar="texto-whatsapp">📋 Copiar linhas</button>
+  <a class="botao" href="https://wa.me/?text={{ texto|urlencode:'' }}" target="_blank" rel="noopener">📲 Mandar no WhatsApp</a>
+</div>
+{{ texto|json_script:"texto-whatsapp" }}
+<script>
+  // copia a mensagem pronta (com as linhas) para colar no grupo
+  document.querySelectorAll("[data-copiar]").forEach(botao => botao.addEventListener("click", async () => {
+    const texto = JSON.parse(document.getElementById(botao.dataset.copiar).textContent);
+    try {
+      await navigator.clipboard.writeText(texto);
+    } catch (e) {  // navegador antigo: copia por um campo escondido
+      const campo = document.createElement("textarea");
+      campo.value = texto;
+      document.body.append(campo);
+      campo.select();
+      document.execCommand("copy");
+      campo.remove();
+    }
+    const antes = botao.textContent;
+    botao.textContent = "✅ Copiado! É só colar no grupo";
+    setTimeout(() => { botao.textContent = antes; }, 2500);
+  }));
+</script>

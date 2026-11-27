@@ -1,20 +1,33 @@
 """Regras de nota.
 
-- Cada pessoa dá uma nota de 0 a 5 (números inteiros) para cada um dos outros jogadores da semana,
+- Cada pessoa dá uma nota de 1 a 10 (números inteiros) para cada um dos outros jogadores da semana,
   ou marca "Não conheço" (aí a opinião dela sobre aquele jogador não entra na conta).
 - Resultado de cada jogador: média das notas que ele recebeu.
 - Ordem do ranking: maior média; no empate, quem recebeu a maior nota; se ainda empatar, ordem alfabética.
   Assim cada um tem uma posição só (1º, 2º, 3º...), sem posições repetidas.
+- Avaliações feitas antes, na escala de 0 a 5 (sem "escala": 10 no registro), continuam valendo:
+  são convertidas na hora para 1 a 10 (0 -> 1, 5 -> 10, proporcional no meio).
 """
 
 from .armazenamento import ordem_alfabetica
 
-OPCOES_NOTA = range(6)  # 0, 1, 2, 3, 4, 5
+ESCALA = 10
+OPCOES_NOTA = range(1, ESCALA + 1)  # 1, 2, ..., 10
 NAO_CONHECO = "nao-conheco"
 
 
+def escala_nova(registro):
+    """A avaliação já foi dada na escala de 1 a 10?"""
+    return (registro or {}).get("escala") == ESCALA
+
+
+def na_escala(valor, registro):
+    """A nota na escala de 1 a 10 (converte as avaliações antigas, de 0 a 5)."""
+    return valor if escala_nova(registro) else 1 + valor * (ESCALA - 1) / 5
+
+
 def ler_nota(texto):
-    """Converte o valor enviado pelo formulário; devolve None se não for um inteiro de 0 a 5."""
+    """Converte o valor enviado pelo formulário; devolve None se não for um inteiro de 1 a 10."""
     try:
         valor = int(texto)
     except (TypeError, ValueError):
@@ -46,7 +59,7 @@ def resultados(pessoas, avaliacoes):
             continue
         for pid, valor in registro.get("notas", {}).items():
             if pid in recebidas and pid != avaliador:
-                recebidas[pid].append(valor)
+                recebidas[pid].append(na_escala(valor, registro))
 
     linhas = [{
         "pessoa": p,
@@ -55,6 +68,7 @@ def resultados(pessoas, avaliacoes):
         "nota": _media(recebidas[p["id"]]),
         "maior": max(recebidas[p["id"]], default=None),
         "qtd": len(recebidas[p["id"]]),
+        "recebidas": recebidas[p["id"]],
         "avaliou": avaliacoes.get(p["id"]),
     } for p in pessoas]
     linhas.sort(key=_ordem_do_ranking)

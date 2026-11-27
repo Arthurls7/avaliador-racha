@@ -6,6 +6,7 @@ import tempfile
 import time
 from pathlib import Path
 from unittest import mock
+from urllib.parse import unquote
 
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -13,8 +14,10 @@ from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 
 from . import armazenamento as arm
-from .notas import ler_nota, resultados
-from .sorteio import GrupoNaoCabe, agrupar, diferenca, forcas, sortear, tamanhos, tamanhos_por_quantidade
+from .destaques import destaques
+from .notas import ler_nota, na_escala, resultados
+from .sorteio import (GrupoNaoCabe, NaoDeuParaSeparar, RegrasEmConflito, agrupar, diferenca, forcas, sortear, tamanhos,
+                      tamanhos_por_quantidade)
 from .trocas import aplicar, comparar, descrever
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
@@ -136,6 +139,32 @@ class SorteioTest(SimpleTestCase):
             sortear(list("abcdef"), dict.fromkeys("abcdef", 3), [2, 2, 2], juntos=[("a", "b"), ("b", "c")])
         self.assertEqual(sorted(erro.exception.grupo), ["a", "b", "c"])
 
+    def test_quem_nao_cai_junto_fica_em_linhas_diferentes(self):
+        aleatorio = random.Random(7)
+        ids = [f"j{i}" for i in range(15)]
+        forca = {j: round(aleatorio.uniform(1, 10), 2) for j in ids}
+        juntos = [("j0", "j1"), ("j5", "j6")]
+        separados = [("j0", "j2"), ("j1", "j3"), ("j2", "j3"), ("j5", "j9"), ("j10", "j11"), ("x", "j4")]
+        for tams in [tamanhos(15, 5), tamanhos_por_quantidade(15, 3)]:
+            for equilibrar in [True, False]:
+                for _ in range(15):
+                    linhas, dif = sortear(ids, forca, tams, equilibrar, 0.3, juntos=juntos, separados=separados)
+                    onde = {j: i for i, linha in enumerate(linhas) for j in linha}
+                    self.assertTrue(all(onde[a] == onde[b] for a, b in juntos), linhas)
+                    self.assertTrue(all(onde[a] != onde[b] for a, b in separados if a in onde and b in onde), linhas)
+                    self.assertEqual([len(l) for l in linhas], tams)
+                    self.assertEqual(sorted(onde), sorted(ids))
+
+    def test_regras_que_nao_dao(self):
+        # juntos (por um grupo) e separados ao mesmo tempo; avisa isso antes de "o grupo não cabe"
+        for tams in [[3, 3], [2, 2, 2]]:
+            with self.assertRaises(RegrasEmConflito):
+                sortear(list("abcdef"), dict.fromkeys("abcdef", 5), tams, juntos=[("a", "b"), ("b", "c")],
+                        separados=[("c", "a")])
+        # três que não podem cair juntos, mas só duas linhas
+        with self.assertRaises(NaoDeuParaSeparar):
+            sortear(list("abcd"), dict.fromkeys("abcd", 5), [2, 2], separados=[("a", "b"), ("b", "c"), ("a", "c")])
+
     def test_sorteio_puro(self):
         forca = {"a": 5, "b": 5, "c": 1, "d": 1}
         linhas, dif = sortear(list(forca), forca, [2, 2], equilibrar=False)
@@ -147,23 +176,30 @@ class SorteioTest(SimpleTestCase):
 
 
 class NotasTest(SimpleTestCase):
-    def test_nota_e_inteiro_de_0_a_5(self):
-        self.assertEqual([ler_nota(v) for v in ["0", "3", "5"]], [0, 3, 5])
-        for invalido in ["6", "-1", "2.5", "", None, "abc"]:
+    def test_nota_e_inteiro_de_1_a_10(self):
+        self.assertEqual([ler_nota(v) for v in ["1", "7", "10"]], [1, 7, 10])
+        for invalido in ["0", "11", "-1", "2.5", "", None, "abc"]:
             self.assertIsNone(ler_nota(invalido))
+
+    def test_avaliacao_antiga_de_0_a_5_vira_1_a_10(self):
+        antiga, nova = {}, {"escala": 10}
+        self.assertEqual([na_escala(v, antiga) for v in [0, 5, 2.5]], [1, 10, 5.5])
+        self.assertAlmostEqual(na_escala(3, antiga), 6.4)
+        self.assertEqual(na_escala(7, nova), 7)
 
     def test_resultado_e_media_das_notas_recebidas(self):
         pessoas = [{"id": i, "nome": i.upper()} for i in "abc"]
         avaliacoes = {
-            "a": {"notas": {"b": 5, "c": 1}},
-            "b": {"notas": {"a": 3, "c": 2}},
-            "c": {"modo": "ranking", "ranking": ["a", "b"], "notas": {"a": 5, "b": 0.5}},  # formato antigo ainda conta
-            "saiu": {"notas": {"a": 0}},  # não joga esta semana
+            "a": {"escala": 10, "notas": {"b": 5, "c": 1}},
+            "b": {"escala": 10, "notas": {"a": 3, "c": 2}},
+            # formato antigo (de 0 a 5) ainda conta, convertido: 5 -> 10 e 0,5 -> 1,9
+            "c": {"modo": "ranking", "ranking": ["a", "b"], "notas": {"a": 5, "b": 0.5}},
+            "saiu": {"escala": 10, "notas": {"a": 1}},  # não joga esta semana
         }
         linhas = {l["id"]: l for l in resultados(pessoas, avaliacoes)}
-        self.assertEqual(linhas["a"]["nota"], 4)
+        self.assertEqual(linhas["a"]["nota"], 6.5)
         self.assertEqual(linhas["a"]["qtd"], 2)
-        self.assertEqual(linhas["b"]["nota"], 2.75)
+        self.assertAlmostEqual(linhas["b"]["nota"], 3.45)
         self.assertEqual(linhas["c"]["nota"], 1.5)
         self.assertEqual([l["id"] for l in resultados(pessoas, avaliacoes)], ["a", "b", "c"])
 
@@ -307,35 +343,34 @@ class FluxoTest(SimpleTestCase):
         self.logar("ana")
         pagina = self.client.get(url)
         self.assertNotContains(pagina, "nota_ana")  # não avalia a si mesmo
-        self.assertContains(pagina, 'name="nota_bruno"', count=7)  # botões de 0 a 5 + "Não conheço"
+        self.assertContains(pagina, 'name="nota_bruno"', count=11)  # botões de 1 a 10 + "Não conheço"
+        self.assertContains(pagina, "Dê uma nota de 1 a 10")
         self.assertNotContains(pagina, "Nota anterior")  # primeira vez: nada para mostrar
-        resposta = self.client.post(url, {"nota_bruno": "0", "nota_caio": "5", "nota_davi": "3"})
+        resposta = self.client.post(url, {"nota_bruno": "1", "nota_caio": "10", "nota_davi": "7"})
         self.assertRedirects(resposta, reverse("votacao:inicio"))
         registro = self.json("avaliacoes.json")["avaliacoes"]["ana"]
-        self.assertEqual(registro["notas"], {"bruno": 0, "caio": 5, "davi": 3})
+        self.assertEqual((registro["escala"], registro["notas"]), (10, {"bruno": 1, "caio": 10, "davi": 7}))
         self.assertEqual(registro["nao_conhece"], [])
-        # ao voltar (com a senha de novo), as notas vêm marcadas e a nota anterior aparece em cada cartão
-        self.logar("ana")
+        # ao voltar, as notas vêm marcadas e a nota anterior aparece em cada cartão
         pagina = self.client.get(url)
-        self.assertContains(pagina, 'name="nota_davi" value="3" required aria-label="3" checked')
-        for nota in ["0", "5", "3"]:
+        self.assertContains(pagina, 'name="nota_davi" value="7" required aria-label="7" checked')
+        for nota in ["1", "10", "7"]:
             self.assertContains(pagina, f"Nota anterior: <b>{nota}</b>")
 
     def test_nao_conheco(self):
         url = reverse("votacao:avaliar", args=["ana"])
         self.logar("ana")
-        resposta = self.client.post(url, {"nota_bruno": "nao-conheco", "nota_caio": "4", "nota_davi": "nao-conheco"})
+        resposta = self.client.post(url, {"nota_bruno": "nao-conheco", "nota_caio": "8", "nota_davi": "nao-conheco"})
         self.assertRedirects(resposta, reverse("votacao:inicio"))
         registro = self.json("avaliacoes.json")["avaliacoes"]["ana"]
-        self.assertEqual(registro["notas"], {"caio": 4})
+        self.assertEqual(registro["notas"], {"caio": 8})
         self.assertEqual(registro["nao_conhece"], ["bruno", "davi"])
         # "Não conheço" fica fora da média
-        arm.salvar_avaliacao("caio", {"notas": {"bruno": 2, "davi": 1, "ana": 3}})
+        arm.salvar_avaliacao("caio", {"escala": 10, "notas": {"bruno": 4, "davi": 2, "ana": 6}})
         linhas = {l["id"]: l for l in resultados(arm.jogadores(), arm.avaliacoes())}
-        self.assertEqual((linhas["bruno"]["nota"], linhas["bruno"]["qtd"]), (2, 1))
-        self.assertEqual((linhas["caio"]["nota"], linhas["caio"]["qtd"]), (4, 1))
+        self.assertEqual((linhas["bruno"]["nota"], linhas["bruno"]["qtd"]), (4, 1))
+        self.assertEqual((linhas["caio"]["nota"], linhas["caio"]["qtd"]), (8, 1))
         # ao voltar, "Não conheço" vem marcado
-        self.logar("ana")
         pagina = self.client.get(url)
         self.assertContains(pagina, 'name="nota_bruno" value="nao-conheco" required checked')
         self.assertContains(pagina, "Nota anterior: <b>não conheço</b>", count=2)
@@ -343,21 +378,24 @@ class FluxoTest(SimpleTestCase):
     def test_avaliar_faltando_ou_fora_do_limite(self):
         url = reverse("votacao:avaliar", args=["ana"])
         self.logar("ana")
-        resposta = self.client.post(url, {"nota_bruno": "6", "nota_caio": "4", "nota_davi": "2.5"})
+        resposta = self.client.post(url, {"nota_bruno": "11", "nota_caio": "4", "nota_davi": "0"})
         self.assertContains(resposta, "para: Bruno, Davi.")
         self.assertContains(resposta, 'name="nota_caio" value="4" required aria-label="4" checked')  # não perde o que marcou
         self.assertEqual(arm.avaliacoes(), {})
 
-    def test_avaliacao_antiga_so_preenche_notas_inteiras(self):
+    def test_avaliacao_antiga_aparece_com_a_escala_antiga(self):
+        # avaliação feita quando as notas eram de 0 a 5 (com notas quebradas do ranking antigo)
         arm.salvar_avaliacao("ana", {"modo": "ranking", "ranking": ["caio", "davi", "bruno"],
                                      "notas": {"caio": 5.0, "davi": 2.75, "bruno": 0.5}})
         self.logar("ana")
         pagina = self.client.get(reverse("votacao:avaliar", args=["ana"])).content.decode()
-        self.assertEqual(pagina.count(" checked"), 1)
-        self.assertIn('name="nota_caio" value="5" required aria-label="5" checked', pagina)
-        # as quebradas não viram botão, mas aparecem como nota anterior
-        self.assertIn("Nota anterior: <b>2,75</b>", pagina)
-        self.assertIn("Nota anterior: <b>0,5</b>", pagina)
+        # nada vem marcado (a escala era outra), mas a nota antiga aparece dizendo de quanto era
+        self.assertEqual(pagina.count(" checked"), 0)
+        self.assertIn("Nota anterior: <b>5 (de 0 a 5)</b>", pagina)
+        self.assertIn("Nota anterior: <b>2,75 (de 0 a 5)</b>", pagina)
+        self.assertIn("Nota anterior: <b>0,5 (de 0 a 5)</b>", pagina)
+        self.assertIn("quando as notas eram de 0 a 5", pagina)
+        self.assertNotIn("mude o que quiser", pagina)
 
     # ---------- senha de 4 números ----------
 
@@ -491,26 +529,111 @@ class FluxoTest(SimpleTestCase):
             self.assertContains(resposta, 'aria-label="Ver o site"')
             self.assertContains(resposta, f'action="{reverse("votacao:painel_sair")}"')
 
+    def posicoes(self, resposta):
+        """[(posição, nome)] do ranking público, na ordem das posições."""
+        achados = re.findall(r'data-posicao="(\d+)".*?<strong class="nome">([^<]+)</strong>',
+                             resposta.content.decode(), re.S)
+        return sorted((int(p), nome) for p, nome in achados)
+
+    def sem_legenda(self, resposta):
+        """A página do ranking até a legenda das tags (que tem o nome de todas as tags)."""
+        return resposta.content.decode().split('class="legenda-tags"')[0]
+
     def test_ranking_publico_sem_media(self):
-        arm.salvar_avaliacao("ana", {"notas": {"bruno": 5, "caio": 2, "davi": 2}})
-        arm.salvar_avaliacao("bruno", {"notas": {"ana": 3, "caio": 4, "davi": 4}})
-        # médias: Bruno 5; Ana, Caio e Davi 3. Desempate: Caio e Davi receberam um 4 (Ana no máximo 3);
+        arm.salvar_avaliacao("ana", {"escala": 10, "notas": {"bruno": 10, "caio": 3, "davi": 3}})
+        arm.salvar_avaliacao("bruno", {"escala": 10, "notas": {"ana": 5, "caio": 7, "davi": 7}})
+        # médias: Bruno 10; Ana, Caio e Davi 5. Desempate: Caio e Davi receberam um 7 (Ana no máximo 5);
         # entre Caio e Davi, ordem alfabética.
         resposta = self.client.get(reverse("votacao:ranking"))
         pagina = resposta.content.decode()
-        self.assertEqual(re.findall(r'<span class="nome">([^<]+)</span>', pagina), ["Bruno", "Caio", "Davi", "Ana"])
+        self.assertEqual(self.posicoes(resposta), [(1, "Bruno"), (2, "Caio"), (3, "Davi"), (4, "Ana")])
+        # o pódio vem na ordem de um pódio de verdade: 2º, 1º, 3º; depois, a briga pelo pódio
+        self.assertEqual(re.findall(r'class="degrau p(\d)"', pagina), ["2", "1", "3"])
+        self.assertContains(resposta, "👑</span>", count=1)  # a coroa em cima do 1º
+        self.assertContains(resposta, "🔥 Na briga pelo pódio")
+        self.assertNotContains(resposta, "O resto da galera")  # só aparece do 7º em diante
         for medalha in ["🥇", "🥈", "🥉"]:
             self.assertEqual(pagina.count(medalha), 1)  # sem posições repetidas
         self.assertContains(resposta, "4º", count=1)
-        for media in ["5,00", "3,00", "5,0", "3,0"]:
+        for media in ["10,00", "5,00", "10,0", "5,0"]:
             self.assertNotIn(media, pagina)
-        self.assertContains(resposta, "2 de 4 já avaliaram")
+        self.assertContains(resposta, "🗳️ 2 de 4 já votaram")
+        # tags
+        ranking = self.sem_legenda(resposta)
+        self.assertEqual(ranking.count("👑 Craque da galera"), 1)
+        self.assertEqual(ranking.count("🗳️ Já votou"), 2)  # Ana (4ª) e Bruno (1º)
+        self.assertNotIn("Estreante", ranking)  # sem histórico, ninguém é estreante
+        self.assertNotIn('class="mov', ranking)  # nem setas de sobe/desce
+        self.assertContains(resposta, "O que significam as tags?")
+
+    def test_ranking_publico_secoes(self):
+        nomes = ["Eva", "Fabio", "Gil", "Hugo"]
+        arm.adicionar_pessoas(nomes)  # 8 jogadores
+        ids = [p["id"] for p in arm.jogadores()]
+        for quem in ids:  # cada um recebe a mesma nota de todo mundo: Ana 1, Bruno 2, ..., Hugo 8
+            arm.salvar_avaliacao(quem, {"escala": 10, "notas": {o: ids.index(o) + 1 for o in ids if o != quem}})
+        resposta = self.client.get(reverse("votacao:ranking"))
+        self.assertEqual([p for p, _ in self.posicoes(resposta)], list(range(1, 9)))
+        pagina = resposta.content.decode()
+        disputa = pagina.split("🔥 Na briga pelo pódio")[1].split("</section>")[0]
+        resto = pagina.split("⚽ O resto da galera")[1].split("</section>")[0]
+        self.assertEqual(re.findall(r'data-posicao="(\d+)"', disputa), ["4", "5", "6"])
+        self.assertEqual(re.findall(r'data-posicao="(\d+)"', resto), ["7", "8"])
+        self.assertEqual(self.posicoes(resposta)[0], (1, "Hugo"))
+        self.assertContains(resposta, "🎉 Todo mundo já votou!")
+        ranking = self.sem_legenda(resposta)
+        self.assertIn("🌟 Todo mundo conhece", ranking)
+        self.assertIn("🎯 Unanimidade", ranking)
 
     def test_ranking_publico_quem_nao_tem_nota(self):
         arm.salvar_avaliacao("ana", {"notas": {"bruno": 5}, "nao_conhece": ["caio", "davi"]})
         resposta = self.client.get(reverse("votacao:ranking"))
-        self.assertContains(resposta, "Ainda sem nota")
-        self.assertContains(self.client.get(reverse("votacao:ranking")), "🥇", count=1)
+        self.assertContains(resposta, "🌱 Esperando notas")
+        self.assertEqual(self.posicoes(resposta), [(1, "Bruno")])
+        self.assertContains(resposta, "🥇", count=1)
+        # sem nenhuma nota: um aviso no lugar do pódio
+        arm.zerar_avaliacoes()
+        resposta = self.client.get(reverse("votacao:ranking"))
+        self.assertContains(resposta, "Ninguém recebeu nota ainda")
+        self.assertNotContains(resposta, "Esperando notas")
+
+    def test_ranking_compara_com_a_semana_fechada(self):
+        self.entrar()
+        arm.salvar_avaliacao("ana", {"escala": 10, "notas": {"bruno": 9, "caio": 6, "davi": 3}})
+        self.client.post(reverse("votacao:painel_fechar_semana"), {"zerar": "on"})
+        # semana passada: Bruno, Caio, Davi (Ana sem nota). Agora Davi passa todo mundo e chega Eva.
+        arm.adicionar_pessoas(["Eva"])
+        arm.salvar_avaliacao("ana", {"escala": 10, "notas": {"bruno": 5, "caio": 4, "davi": 10, "eva": 2}})
+        resposta = self.client.get(reverse("votacao:ranking"))
+        self.assertEqual(self.posicoes(resposta), [(1, "Davi"), (2, "Bruno"), (3, "Caio"), (4, "Eva")])
+        self.assertContains(resposta, 'title="Subiu 2 desde a última semana">▲2</span>')
+        self.assertContains(resposta, 'title="Caiu 1 desde a última semana">▼1</span>', count=2)
+        ranking = self.sem_legenda(resposta)
+        self.assertEqual(ranking.count("🏅 Campeão da última semana"), 1)  # Bruno
+        self.assertEqual(ranking.count("🆕 Estreante"), 1)  # Eva (Ana já apareceu, sem nota)
+        self.assertContains(resposta, "📚 Pódios anteriores")
+        self.assertContains(resposta, "🥇 Bruno · 🥈 Caio · 🥉 Davi")
+
+    def test_destaques(self):
+        def linha(pid, recebidas):
+            return {"id": pid, "qtd": len(recebidas), "recebidas": recebidas}
+
+        ranking = [linha("a", [9, 9, 10]), linha("b", [10, 2, 5, 9]), linha("c", [5]), linha("d", [3, 4])]
+        semana = {"ranking": [{"id": "c"}, {"id": "x"}, {"id": "y"}, {"id": "a"}], "sem_nota": [{"id": "d"}]}
+        extras = destaques(ranking, {"a", "b", "c", "e"}, [semana])
+        texto = {pid: [t["texto"] for t in e["tags"]] for pid, e in extras.items()}
+        self.assertEqual(texto["a"], ["Craque da galera", "Em alta", "Unanimidade", "Todo mundo conhece", "Já votou"])
+        self.assertEqual(texto["b"], ["Estreante", "Polêmico", "Todo mundo conhece", "Já votou"])
+        self.assertEqual(texto["c"], ["Campeão da última semana", "Já votou"])
+        self.assertEqual(texto["d"], [])  # já apareceu (sem nota), então não é estreante
+        self.assertEqual(extras["a"]["mov"]["texto"], "▲3")
+        self.assertEqual(extras["c"]["mov"]["texto"], "▼2")
+        self.assertIsNone(extras["b"]["mov"])
+        # sem histórico: sem setas e sem estreantes; o 1º continua coroado
+        extras = destaques(ranking, set(), [])
+        self.assertEqual(extras["a"]["tags"][0]["texto"], "Craque da galera")
+        self.assertTrue(all(e["mov"] is None for e in extras.values()))
+        self.assertNotIn("Estreante", str(extras))
 
     def test_sorteio_por_numero_de_linhas_e_limite(self):
         self.entrar()
@@ -525,7 +648,7 @@ class FluxoTest(SimpleTestCase):
         self.assertContains(resposta, "(limite 0,50)")
         # o painel lembra as escolhas
         self.assertContains(resposta, 'name="divisao" value="num_linhas" checked')
-        self.assertContains(resposta, 'name="diferenca_max" id="diferenca_max" min="0" max="2" step="0.1" value="0.5"')
+        self.assertContains(resposta, 'name="diferenca_max" id="diferenca_max" min="0" max="4" step="0.1" value="0.5"')
         self.assertContains(resposta, "Diferença entre a linha mais forte e a mais fraca agora")
         # mais linhas que gente: uma pessoa por linha
         self.client.post(sortear, {"divisao": "num_linhas", "num_linhas": "50"})
@@ -534,17 +657,21 @@ class FluxoTest(SimpleTestCase):
         self.client.post(sortear, {"divisao": "por_linha", "por_linha": "2"})
         self.assertEqual([len(l) for l in arm.linhas()["linhas"]], [2, 2, 1])
 
+    def regra(self, regra, a, b, tirar=False):
+        dados = {"regra": regra, "a": a, "b": b, **({"acao": "tirar"} if tirar else {})}
+        return self.client.post(reverse("votacao:painel_linhas_regra"), dados, follow=True)
+
     def test_quem_cai_junto_no_painel(self):
         self.entrar()
-        juntar, separar = reverse("votacao:painel_linhas_juntar"), reverse("votacao:painel_linhas_separar")
+        juntar = lambda a, b: self.regra("juntos", a, b)  # noqa: E731
         sortear = reverse("votacao:painel_linhas_sortear")
-        resposta = self.client.post(juntar, {"a": "ana", "b": "bruno"}, follow=True)
-        self.assertRedirects(resposta, reverse("votacao:painel_linhas") + "#juntos")
-        self.assertContains(resposta, "Ana e Bruno vão cair juntos")
+        resposta = juntar("ana", "bruno")
+        self.assertRedirects(resposta, reverse("votacao:painel_linhas") + "#regras")
+        self.assertContains(resposta, "🤝 Ana e Bruno vão cair juntos")
         self.assertEqual(arm.linhas()["juntos"], [["ana", "bruno"]])
         # repetida (em qualquer ordem) ou a mesma pessoa duas vezes não entra
-        self.assertContains(self.client.post(juntar, {"a": "bruno", "b": "ana"}, follow=True), "já estavam juntos")
-        self.assertContains(self.client.post(juntar, {"a": "ana", "b": "ana"}, follow=True), "duas pessoas diferentes")
+        self.assertContains(juntar("bruno", "ana"), "Essa regra já existe")
+        self.assertContains(juntar("ana", "ana"), "duas pessoas diferentes")
         self.assertEqual(len(arm.linhas()["juntos"]), 1)
 
         # o sorteio sempre põe os dois juntos (e continua valendo nos próximos sorteios)
@@ -555,21 +682,22 @@ class FluxoTest(SimpleTestCase):
         pagina = self.client.get(reverse("votacao:painel_linhas"))
         self.assertContains(pagina, 'title="Cai junto com alguém"', count=2)
         resposta = self.client.post(sortear, {"divisao": "num_linhas", "num_linhas": "2"}, follow=True)
-        self.assertContains(resposta, "com 1 grupo(s) de quem cai junto")
+        self.assertContains(resposta, "respeitando 1 regra(s)")
 
         # duplas encadeadas viram um grupo; se não couber na linha, o sorteio não acontece
-        self.client.post(juntar, {"a": "bruno", "b": "caio"})
+        juntar("bruno", "caio")
         self.assertContains(self.client.get(reverse("votacao:painel_linhas")),
                             "Juntando as duplas, Ana, Bruno e Caio vão cair na mesma linha")
         antes = arm.linhas()["linhas"]
         resposta = self.client.post(sortear, {"divisao": "num_linhas", "num_linhas": "2"}, follow=True)
         self.assertContains(resposta, "Não deu para sortear: Ana, Bruno e Caio têm que cair juntos (3 pessoas)")
+        self.assertContains(resposta, "tire alguma regra de &quot;cai junto&quot;")
         self.assertEqual(arm.linhas()["linhas"], antes)
 
         # tirar a dupla; quem sai da semana não conta, e quem é excluído some das duplas
-        self.client.post(separar, {"a": "caio", "b": "bruno"})
+        self.assertContains(self.regra("juntos", "caio", "bruno", tirar=True), "Regra tirada.")
         self.assertEqual(arm.linhas()["juntos"], [["ana", "bruno"]])
-        self.client.post(juntar, {"a": "caio", "b": "davi"})
+        juntar("caio", "davi")
         arm.salvar_cadastro({"davi"}, {}, set())  # Davi fora desta semana
         self.assertContains(self.client.get(reverse("votacao:painel_linhas")), "não joga esta semana: não conta")
         self.client.post(sortear, {"divisao": "por_linha", "por_linha": "2"})
@@ -577,16 +705,64 @@ class FluxoTest(SimpleTestCase):
         arm.excluir_pessoa("bruno")
         self.assertEqual(arm.linhas()["juntos"], [["caio", "davi"]])
 
+    def test_quem_nao_cai_junto_no_painel(self):
+        self.entrar()
+        sortear = reverse("votacao:painel_linhas_sortear")
+        resposta = self.regra("separados", "ana", "bruno")
+        self.assertContains(resposta, "🙅 Ana e Bruno vão cair em linhas diferentes")
+        self.assertEqual(arm.linhas()["separados"], [["ana", "bruno"]])
+        pagina = self.client.get(reverse("votacao:painel_linhas"))
+        self.assertContains(pagina, 'title="Não cai junto"')
+        self.assertContains(pagina, '<option value="separados">🙅 não cai junto com</option>')
+
+        # o sorteio nunca põe os dois na mesma linha, com ou sem equilíbrio
+        for equilibrar in ["on", ""] * 6:
+            resposta = self.client.post(sortear, {"divisao": "num_linhas", "num_linhas": "2", "equilibrar": equilibrar},
+                                        follow=True)
+            self.assertFalse(any({"ana", "bruno"} <= set(linha) for linha in arm.linhas()["linhas"]))
+        self.assertContains(resposta, "respeitando 1 regra(s)")
+
+        # a mesma dupla não pode ser "cai junto" e "não cai junto"
+        resposta = self.regra("juntos", "bruno", "ana")
+        self.assertContains(resposta, "Ana já estão em &quot;não cai junto&quot;. Tire aquela regra primeiro.")
+        self.assertEqual(arm.linhas()["juntos"], [])
+        # ...nem por um grupo: Ana+Caio e Caio+Bruno juntariam Ana e Bruno
+        self.regra("juntos", "ana", "caio")
+        self.regra("juntos", "caio", "bruno")
+        antes = arm.linhas()["linhas"]
+        resposta = self.client.post(sortear, {"divisao": "num_linhas", "num_linhas": "2"}, follow=True)
+        self.assertContains(resposta, "têm que cair juntos (pelas duplas de &quot;cai junto&quot;) e separados")
+        self.assertEqual(arm.linhas()["linhas"], antes)
+        self.regra("juntos", "ana", "caio", tirar=True)
+        self.regra("juntos", "caio", "bruno", tirar=True)
+
+        # três que não podem se encontrar, mas só duas linhas
+        self.regra("separados", "bruno", "caio")
+        self.regra("separados", "ana", "caio")
+        resposta = self.client.post(sortear, {"divisao": "num_linhas", "num_linhas": "2"}, follow=True)
+        self.assertContains(resposta, "não há linhas suficientes para separar todo mundo")
+        self.client.post(sortear, {"divisao": "num_linhas", "num_linhas": "3"})
+        self.assertEqual(len(arm.linhas()["linhas"]), 3)
+
+        # tirar e excluir
+        self.regra("separados", "caio", "ana", tirar=True)
+        self.assertEqual(arm.linhas()["separados"], [["ana", "bruno"], ["bruno", "caio"]])
+        arm.excluir_pessoa("bruno")
+        self.assertEqual(arm.linhas()["separados"], [])
+        # regra inválida não faz nada
+        self.regra("inimigos", "ana", "caio")
+        self.assertEqual((arm.linhas()["juntos"], arm.linhas()["separados"]), ([], []))
+
     def test_aviso_quando_o_limite_nao_cabe(self):
         self.entrar()
         arm.adicionar_pessoas(["Ana", "Bruno"], somente_estes=True)
-        arm.salvar_avaliacao("ana", {"notas": {"bruno": 0}})
-        arm.salvar_avaliacao("bruno", {"notas": {"ana": 5}})
+        arm.salvar_avaliacao("ana", {"escala": 10, "notas": {"bruno": 1}})
+        arm.salvar_avaliacao("bruno", {"escala": 10, "notas": {"ana": 10}})
         resposta = self.client.post(reverse("votacao:painel_linhas_sortear"),
                                     {"divisao": "num_linhas", "num_linhas": "2", "equilibrar": "on",
                                      "diferenca_max": "0.5"}, follow=True)
         self.assertContains(resposta, "Não deu para ficar dentro do limite de 0,50")
-        self.assertContains(resposta, "o mais equilibrado que deu foi 5,00")
+        self.assertContains(resposta, "o mais equilibrado que deu foi 9,00")
 
     def test_linhas(self):
         self.entrar()
@@ -863,13 +1039,14 @@ class FluxoTest(SimpleTestCase):
         senha_ana = self.senha("ana")
         for nome in ["painel_adicionar", "painel_cadastro_salvar", "painel_excluir", "painel_zerar", "painel_remover_foto",
                      "painel_nova_senha", "painel_linhas_sortear", "painel_linhas_publicar",
-                     "painel_linhas_despublicar", "painel_linhas_ajustar", "painel_linhas_juntar",
-                     "painel_linhas_separar"]:
+                     "painel_linhas_despublicar", "painel_linhas_ajustar", "painel_linhas_regra",
+                     "painel_fechar_semana", "painel_limpar_historico"]:
             resposta = self.client.post(reverse(f"votacao:{nome}"), {"nomes": "Hacker", "id": "ana", "ids": ["ana"],
-                                                                     "a": "ana", "b": "bruno"})
+                                                                     "a": "ana", "b": "bruno", "regra": "juntos"})
             self.assertRedirects(resposta, reverse("votacao:painel_entrar"))
         self.assertEqual(len(arm.jogadores()), 4)
         self.assertEqual(arm.linhas()["juntos"], [])
+        self.assertEqual(arm.historico(), [])
         self.assertEqual(self.senha("ana"), senha_ana)
         self.assertEqual((arm.linhas()["linhas"], arm.linhas()["publicado"]), ([["ana", "bruno"]], True))
         resposta = self.client.post(reverse("votacao:painel_entrar"), {"usuario": "chefe", "senha": "errada"})
@@ -903,6 +1080,91 @@ class FluxoTest(SimpleTestCase):
 
         self.client.post(reverse("votacao:painel_sair"))
         self.assertRedirects(self.client.get(reverse("votacao:painel")), reverse("votacao:painel_entrar"))
+
+    def test_copiar_linhas_para_o_whatsapp(self):
+        arm.salvar_sorteio([["ana", "bruno"], ["caio", "davi"]], 2, True)
+        self.assertNotContains(self.client.get(reverse("votacao:linhas")), "Copiar linhas")  # ainda não publicadas
+        self.entrar()
+        painel = self.client.get(reverse("votacao:painel_linhas"))
+        self.assertContains(painel, "📋 Copiar linhas")  # o organizador já pode copiar antes de publicar
+        arm.publicar_linhas()
+        resposta = self.client.get(reverse("votacao:linhas"))
+        self.assertContains(resposta, 'data-copiar="texto-whatsapp"')
+        self.assertContains(resposta, 'href="https://wa.me/?text=')
+        texto = json.loads(re.search(r'<script id="texto-whatsapp" type="application/json">(.*?)</script>',
+                                     resposta.content.decode(), re.S).group(1))
+        self.assertTrue(texto.startswith("⚽ *Racha do Doug* · linhas de "))
+        self.assertIn("🟢 *Linha 1*\n• Ana\n• Bruno\n\n🟠 *Linha 2*\n• Caio\n• Davi", texto)
+        self.assertTrue(texto.endswith("Bom jogo! 👉 http://testserver/linhas/"))
+        # no link do WhatsApp vai o mesmo texto
+        link = re.search(r'href="https://wa.me/\?text=([^"]+)"', resposta.content.decode()).group(1)
+        self.assertEqual(unquote(link), texto)
+
+    def test_barra_de_progresso_no_inicio(self):
+        resposta = self.client.get(reverse("votacao:inicio"))
+        self.assertContains(resposta, "🗳️ 0 de 4 já votaram")
+        self.assertContains(resposta, 'aria-valuenow="0"')
+        arm.salvar_avaliacao("ana", {"escala": 10, "notas": {"bruno": 7}})
+        resposta = self.client.get(reverse("votacao:inicio"))
+        self.assertContains(resposta, "🗳️ 1 de 4 já votaram")
+        self.assertContains(resposta, 'style="width: 25%"')
+        self.assertNotContains(resposta, "Todo mundo já votou")
+        for quem in ["bruno", "caio", "davi"]:
+            arm.salvar_avaliacao(quem, {"escala": 10, "notas": {"ana": 7}})
+        resposta = self.client.get(reverse("votacao:inicio"))
+        self.assertContains(resposta, "100%")
+        self.assertContains(resposta, "🎉 Todo mundo já votou!")
+
+    def test_fechar_a_semana(self):
+        self.entrar()
+        arm.salvar_avaliacao("ana", {"escala": 10, "notas": {"bruno": 8, "caio": 6}, "nao_conhece": ["davi"]})
+        arm.salvar_avaliacao("bruno", {"escala": 10, "notas": {"ana": 7, "caio": 9}})
+        arm.salvar_sorteio([["ana", "caio"], ["bruno", "davi"]], 2, True)
+        arm.publicar_linhas()
+        arm.adicionar_regra("juntos", "ana", "caio")
+        painel = self.client.get(reverse("votacao:painel"))
+        self.assertContains(painel, "Nenhuma semana fechada ainda")
+        self.assertNotContains(painel, "Limpar histórico")
+
+        # só guardar: nada mais muda
+        resposta = self.client.post(reverse("votacao:painel_fechar_semana"), follow=True)
+        self.assertRedirects(resposta, reverse("votacao:painel") + "#historico")
+        self.assertContains(resposta, "📚 Semana guardada no histórico. Bora para a próxima! ⚽")
+        [semana] = arm.historico()
+        self.assertEqual((semana["jogadores"], semana["votaram"]), (4, 2))
+        self.assertEqual([(r["nome"], r["nota"], r["qtd"]) for r in semana["ranking"]],
+                         [("Bruno", 8.0, 1), ("Caio", 7.5, 2), ("Ana", 7.0, 1)])
+        self.assertEqual(semana["sem_nota"], [{"id": "davi", "nome": "Davi"}])
+        self.assertEqual(semana["linhas"], [["Ana", "Caio"], ["Bruno", "Davi"]])
+        self.assertTrue(semana["data"])
+        self.assertEqual(len(arm.avaliacoes()), 2)
+        self.assertTrue(arm.linhas()["publicado"])
+        # o histórico aparece no painel, com as médias
+        self.assertContains(resposta, "2 de 4 votaram")
+        self.assertContains(resposta, "🥇 Bruno · 🥈 Caio · 🥉 Ana")
+        self.assertContains(resposta, "1º Bruno</span><span class=\"suave\">8,00 · 1 nota</span>")
+        self.assertContains(resposta, "<strong>Linha 1:</strong> Ana, Caio")
+        self.assertContains(resposta, "Sem nota: Davi")
+
+        # guardar e já preparar a próxima
+        self.client.post(reverse("votacao:painel_fechar_semana"),
+                         {"apagar_linhas": "on", "zerar": "on", "limpar_lista": "on"})
+        self.assertEqual(len(arm.historico()), 2)
+        self.assertEqual(arm.avaliacoes(), {})
+        self.assertEqual((arm.linhas()["linhas"], arm.linhas()["publicado"]), ([], False))
+        self.assertEqual(arm.linhas()["juntos"], [["ana", "caio"]])  # as regras continuam
+        self.assertEqual(arm.jogadores(), [])
+        self.assertEqual(len(arm.pessoas()), 4)  # o cadastro continua
+        # sem ninguém na lista, não guarda nada
+        resposta = self.client.post(reverse("votacao:painel_fechar_semana"), follow=True)
+        self.assertContains(resposta, "não há o que guardar")
+        self.assertEqual(len(arm.historico()), 2)
+
+        # limpar o histórico
+        resposta = self.client.post(reverse("votacao:painel_limpar_historico"), follow=True)
+        self.assertContains(resposta, "🧹 Histórico apagado.")
+        self.assertEqual(arm.historico(), [])
+        self.assertContains(resposta, "Nenhuma semana fechada ainda")
 
     def test_painel_salvar_cadastro_com_foto(self):
         self.entrar()

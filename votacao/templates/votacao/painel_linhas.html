@@ -35,9 +35,17 @@
   .tirar { width: 32px; height: 32px; border: 2px solid var(--borda); border-radius: 10px; background: #fff;
            font: inherit; cursor: pointer; }
   .tirar:hover { border-color: var(--erro); }
-  .nova-dupla { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
-  .nova-dupla select { min-width: 0; width: 100%; }
-  .nova-dupla .botao { grid-column: 1 / -1; }
+  .tipo-regra { font-size: 1.1rem; }
+  .nova-regra { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; }
+  .nova-regra select { min-width: 0; width: 100%; }
+  .nova-regra .qual-regra { grid-column: 1 / -1; grid-row: 2; font-weight: 700; }
+  .nova-regra select[name=b] { grid-column: 1 / -1; grid-row: 3; }
+  .nova-regra .botao { grid-column: 1 / -1; grid-row: 4; }
+  @media (min-width: 641px) {
+    .nova-regra { grid-template-columns: 1fr auto 1fr; }
+    .nova-regra .qual-regra, .nova-regra select[name=b] { grid-column: auto; grid-row: 1; }
+    .nova-regra .botao { grid-row: 2; }
+  }
   .junto { font-size: .9rem; }
 {% endblock %}
 {% block subtitulo %}<small>Organizador</small>{% endblock %}
@@ -50,21 +58,23 @@
 {% endif %}
 
 {% if total %}
-  <section class="cartao" id="juntos">
-    <h2>🤝 Quem cai junto</h2>
-    <p class="suave pequeno">Duplas que têm que ficar na mesma linha no sorteio. Valem para os próximos sorteios até
-      você tirar.</p>
-    {% if duplas %}
+  <section class="cartao" id="regras">
+    <h2>📏 Regras do sorteio</h2>
+    <p class="suave pequeno">🤝 quem tem que cair na mesma linha e 🙅 quem tem que cair em linhas diferentes.
+      Valem para os próximos sorteios até você tirar.</p>
+    {% if regras %}
       <ul class="duplas">
-        {% for d in duplas %}
-          <li class="{% if d.fora %}fora-semana{% endif %}">
-            {% include "votacao/_avatar.html" with p=d.a tamanho="mini" %}<strong>{{ d.a.nome }}</strong>
-            <span class="mais">+</span>
-            {% include "votacao/_avatar.html" with p=d.b tamanho="mini" %}<strong>{{ d.b.nome }}</strong>
-            {% if d.fora %}<span class="suave pequeno">(alguém não joga esta semana: não conta)</span>{% endif %}
-            <form method="post" action="{% url 'votacao:painel_linhas_separar' %}">
-              {% csrf_token %}<input type="hidden" name="a" value="{{ d.a.id }}"><input type="hidden" name="b" value="{{ d.b.id }}">
-              <button type="submit" class="tirar" title="Tirar a dupla" aria-label="Tirar a dupla {{ d.a.nome }} e {{ d.b.nome }}">✕</button>
+        {% for r in regras %}
+          <li class="{% if r.fora %}fora-semana{% endif %}">
+            <span class="tipo-regra" title="{% if r.regra == 'juntos' %}Cai junto{% else %}Não cai junto{% endif %}">{% if r.regra == "juntos" %}🤝{% else %}🙅{% endif %}</span>
+            {% include "votacao/_avatar.html" with p=r.a tamanho="mini" %}<strong>{{ r.a.nome }}</strong>
+            <span class="mais">{% if r.regra == "juntos" %}+{% else %}✕{% endif %}</span>
+            {% include "votacao/_avatar.html" with p=r.b tamanho="mini" %}<strong>{{ r.b.nome }}</strong>
+            {% if r.fora %}<span class="suave pequeno">(alguém não joga esta semana: não conta)</span>{% endif %}
+            <form method="post" action="{% url 'votacao:painel_linhas_regra' %}">
+              {% csrf_token %}<input type="hidden" name="acao" value="tirar"><input type="hidden" name="regra" value="{{ r.regra }}">
+              <input type="hidden" name="a" value="{{ r.a.id }}"><input type="hidden" name="b" value="{{ r.b.id }}">
+              <button type="submit" class="tirar" title="Tirar a regra" aria-label="Tirar a regra de {{ r.a.nome }} e {{ r.b.nome }}">🗑️</button>
             </form>
           </li>
         {% endfor %}
@@ -73,18 +83,21 @@
         <p class="msg info">🤝 Juntando as duplas, {{ nomes }} vão cair na mesma linha.</p>
       {% endfor %}
     {% endif %}
-    <form method="post" action="{% url 'votacao:painel_linhas_juntar' %}" class="nova-dupla">
+    <form method="post" action="{% url 'votacao:painel_linhas_regra' %}" class="nova-regra">
       {% csrf_token %}
       <select name="a" required aria-label="Primeira pessoa">
         <option value="">Escolha…</option>
         {% for p in jogadores %}<option value="{{ p.id }}">{{ p.nome }}</option>{% endfor %}
       </select>
-      <span class="mais">+</span>
+      <select name="regra" aria-label="Regra" class="qual-regra">
+        <option value="juntos">🤝 cai junto com</option>
+        <option value="separados">🙅 não cai junto com</option>
+      </select>
       <select name="b" required aria-label="Segunda pessoa">
         <option value="">Escolha…</option>
         {% for p in jogadores %}<option value="{{ p.id }}">{{ p.nome }}</option>{% endfor %}
       </select>
-      <button type="submit" class="botao secundario">🤝 Adicionar dupla</button>
+      <button type="submit" class="botao secundario">➕ Adicionar regra</button>
     </form>
   </section>
 {% endif %}
@@ -117,7 +130,7 @@
       </label>
       <div class="limite" id="caixa-limite">
         <label for="diferenca_max">Diferença máxima entre as linhas: <strong id="valor-limite"></strong></label>
-        <input type="range" name="diferenca_max" id="diferenca_max" min="0" max="2" step="0.1" value="{{ diferenca_max }}">
+        <input type="range" name="diferenca_max" id="diferenca_max" min="0" max="4" step="0.1" value="{{ diferenca_max }}">
         <div class="extremos suave pequeno"><span>⚖️ mais equilíbrio</span><span>mais sorte 🎲</span></div>
         <p class="suave pequeno">É a diferença entre a média da linha mais forte e a da mais fraca. Quanto maior,
           mais o sorteio varia de uma vez para outra.</p>
@@ -148,6 +161,7 @@
     </div>
   {% endif %}
 
+  {% include "votacao/_compartilhar_linhas.html" with texto=texto_whatsapp %}
   {% if diferenca_atual %}
     <p class="suave">⚖️ Diferença entre a linha mais forte e a mais fraca agora: <strong>{{ diferenca_atual }}</strong></p>
   {% endif %}

@@ -11,6 +11,18 @@
   .resultado .nota-final { flex: none; display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
   .resultado .nota-final strong { font-size: 1.25rem; color: var(--verde-escuro); }
   .resultado .nota-final small { font-size: .75rem; color: var(--suave); }
+
+  .historico { list-style: none; margin: 0 0 14px; padding: 0; }
+  .historico > li { border-bottom: 1px solid var(--borda); }
+  .historico > li:last-child { border-bottom: 0; }
+  .historico summary { display: flex; flex-direction: column; gap: 2px; padding: 10px 0; cursor: pointer; list-style: none; }
+  .historico summary::-webkit-details-marker { display: none; }
+  .historico summary::after { content: "ver detalhes ▾"; font-size: .78rem; font-weight: 700; color: var(--verde-escuro); }
+  .historico details[open] summary::after { content: "fechar ▴"; }
+  .podio-mini { font-size: .9rem; }
+  .ranking-antigo { margin: 0 0 8px; padding: 0; list-style: none; font-size: .9rem; }
+  .ranking-antigo li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; }
+  .linhas-antigas p { margin: 4px 0; font-size: .9rem; }
 {% endblock %}
 {% block subtitulo %}<small>Organizador</small>{% endblock %}
 {% block menu %}{% include "votacao/_menu_painel.html" with aba="semana" %}{% endblock %}
@@ -52,5 +64,58 @@
       ajustar na aba <a href="{% url 'votacao:painel_cadastro' %}">Cadastro</a>.</p>
     <button type="submit" class="botao">Atualizar lista</button>
   </form>
+</section>
+
+<section class="cartao" id="fechar">
+  <h2>📅 Fechar a semana</h2>
+  <p class="suave">Guarda no histórico o ranking (com as médias), quem votou e as linhas desta semana. Depois,
+    se quiser, já deixa tudo pronto para a próxima:</p>
+  <form method="post" action="{% url 'votacao:painel_fechar_semana' %}">
+    {% csrf_token %}
+    <label class="opcao-check"><input type="checkbox" name="apagar_linhas" checked>
+      <span>Apagar as linhas sorteadas (as regras do sorteio continuam)</span></label>
+    <label class="opcao-check"><input type="checkbox" name="zerar">
+      <span>Zerar as avaliações (todo mundo vota de novo)</span></label>
+    <label class="opcao-check"><input type="checkbox" name="limpar_lista">
+      <span>Tirar todo mundo da lista da semana (o cadastro continua)</span></label>
+    <button type="submit" class="botao largo" data-confirmar="Fechar a semana e guardar no histórico?">📅 Fechar a semana</button>
+  </form>
+</section>
+
+<section class="cartao" id="historico">
+  <h2>📚 Histórico</h2>
+  {% if semanas %}
+    <ul class="historico">
+      {% for s in semanas %}
+        <li>
+          <details>
+            <summary>
+              <strong>Semana fechada em {{ s.quando }}</strong>
+              <span class="suave pequeno">{{ s.votaram }} de {{ s.jogadores }} votaram</span>
+              <span class="podio-mini">{% for p in s.podio %}{{ p.medalha }} {{ p.nome }}{% if not forloop.last %} · {% endif %}{% endfor %}</span>
+            </summary>
+            {% if s.ranking_fmt %}
+              <ol class="ranking-antigo">
+                {% for r in s.ranking_fmt %}<li><span>{{ r.posicao }}º {{ r.nome }}</span><span class="suave">{{ r.nota }} · {{ r.qtd }} nota{{ r.qtd|pluralize }}</span></li>{% endfor %}
+              </ol>
+            {% endif %}
+            {% if s.sem_nota %}<p class="suave pequeno">Sem nota: {% for x in s.sem_nota %}{{ x.nome|default:x }}{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+            {% if s.linhas %}
+              <div class="linhas-antigas">
+                {% for linha in s.linhas %}<p><strong>Linha {{ forloop.counter }}:</strong> {{ linha|join:", " }}</p>{% endfor %}
+              </div>
+            {% endif %}
+          </details>
+        </li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="{% url 'votacao:painel_limpar_historico' %}">
+      {% csrf_token %}
+      <button type="submit" class="botao perigo" data-confirmar="Apagar TODO o histórico? Não dá para desfazer.">🧹 Limpar histórico</button>
+    </form>
+  {% else %}
+    <p class="suave">Nenhuma semana fechada ainda. Quando você fechar a semana, o retrato dela aparece aqui e o
+      ranking público passa a mostrar quem subiu e quem desceu.</p>
+  {% endif %}
 </section>
 {% endblock %}

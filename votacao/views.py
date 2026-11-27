@@ -13,8 +13,11 @@ from django.views.decorators.http import require_POST
 
 from . import armazenamento as arm
 from . import trocas
-from .notas import NAO_CONHECO, OPCOES_NOTA, formatar, formatar_curto, ler_nota, resultados
-from .sorteio import GrupoNaoCabe, agrupar, diferenca, forcas, sortear, tamanhos, tamanhos_por_quantidade
+from .destaques import destaques
+from .notas import (ESCALA, NAO_CONHECO, OPCOES_NOTA, escala_nova, formatar, formatar_curto, ler_nota,
+                    resultados)
+from .sorteio import (GrupoNaoCabe, NaoDeuParaSeparar, RegrasEmConflito, agrupar, diferenca, forcas, sortear,
+                      tamanhos, tamanhos_por_quantidade)
 
 # cores do círculo com as iniciais de quem ainda não tem foto (todas com bom contraste para texto branco)
 CORES = ["#d1495b", "#00798c", "#30638e", "#6a4c93", "#2b9348", "#c8553d", "#3d5a80", "#b5179e", "#7c6a0a"]
@@ -128,11 +131,34 @@ def inicio(request):
         "pessoas": pessoas,
         "conectado": _visual(conectado) if conectado else None,
         "dias_conectado": DIAS_CONECTADO,
+        "progresso": _progresso(pessoas),
     })
+
+
+def _progresso(pessoas):
+    """Quantos da semana já votaram, para a barrinha de progresso."""
+    votaram = sum(1 for p in pessoas if p["avaliou"])
+    return {"votaram": votaram, "total": len(pessoas),
+            "porcento": round(100 * votaram / len(pessoas)) if pessoas else 0}
 
 
 def _cor_linha(numero):
     return CORES_LINHAS[(numero - 1) % len(CORES_LINHAS)]
+
+
+# bolinhas coloridas do WhatsApp, na mesma ordem das cores das linhas
+BOLINHAS_LINHAS = ["🟢", "🟠", "🔵", "🔴", "🟣", "⚫", "🟡", "⚪"]
+
+
+def _texto_whatsapp(request, linhas, dados):
+    """Mensagem pronta para colar no grupo: as linhas com os nomes e o link do site."""
+    dia = datetime.fromisoformat(dados["data"]).strftime("%d/%m") if dados.get("data") else ""
+    partes = [f"⚽ *Racha do Doug* · linhas{' de ' + dia if dia else ''}"]
+    for i, linha in enumerate(linhas):
+        partes += ["", f"{BOLINHAS_LINHAS[i % len(BOLINHAS_LINHAS)]} *Linha {i + 1}*"]
+        partes += [f"• {p['nome']}" for p in linha]
+    partes += ["", f"Bom jogo! 👉 {request.build_absolute_uri(reverse('votacao:linhas'))}"]
+    return "\n".join(partes)
 
 
 def _linhas_publicadas():
@@ -150,6 +176,7 @@ def ver_linhas(request):
         "linhas": [{"numero": i + 1, "cor": _cor_linha(i + 1), "jogadores": linha} for i, linha in enumerate(linhas)],
         "data": _data(dados),
         "trocas_ativas": TROCAS_ATIVAS,
+        "texto_whatsapp": _texto_whatsapp(request, linhas, dados) if linhas else "",
     })
 
 
@@ -204,19 +231,32 @@ def sugerir_troca(request):
     })
 
 
+def _dia(registro):
+    return datetime.fromisoformat(registro["data"]).strftime("%d/%m") if registro.get("data") else ""
+
+
 def ver_ranking(request):
-    """Só a ordem (a média de cada um não aparece). Empates já vêm desfeitos por resultados()."""
+    """Pódio, seções e tags; a média de cada um não aparece. Empates já vêm desfeitos por resultados()."""
     jogadores = [_visual(p) for p in arm.jogadores()]
     avaliacoes = arm.avaliacoes()
     linhas = resultados(jogadores, avaliacoes)
-    com_nota = [linha["pessoa"] for linha in linhas if linha["nota"] is not None]
-    sem_nota = [linha["pessoa"] for linha in linhas if linha["nota"] is None]
-    ranking = [{"posicao": i, "medalha": MEDALHAS.get(i, ""), "pessoa": p} for i, p in enumerate(com_nota, start=1)]
+    com_nota = [linha for linha in linhas if linha["nota"] is not None]
+    votaram = {p["id"] for p in jogadores if p["id"] in avaliacoes}
+    semanas = arm.historico()
+    extras = destaques(com_nota, votaram, semanas)
+    ranking = [{"posicao": i, "medalha": MEDALHAS.get(i, ""), "pessoa": linha["pessoa"], **extras[linha["id"]]}
+               for i, linha in enumerate(com_nota, start=1)]
+    podio = ranking[:3]
     return render(request, "votacao/ranking.html", {
-        "ranking": ranking,
-        "sem_nota": sem_nota,
-        "total": len(jogadores),
-        "ja_avaliaram": sum(1 for p in jogadores if p["id"] in avaliacoes),
+        "podio": [podio[i] for i in (1, 0, 2) if i < len(podio)],  # 2º, 1º, 3º, como num pódio de verdade
+        "disputa": ranking[3:6],
+        "resto": ranking[6:],
+        "sem_nota": [linha["pessoa"] for linha in linhas if linha["nota"] is None],
+        "progresso": _progresso([{"avaliou": p["id"] in votaram} for p in jogadores]),
+        "semanas_anteriores": [{
+            "dia": _dia(semana),
+            "podio": [{"medalha": MEDALHAS[i + 1], "nome": r["nome"]} for i, r in enumerate(semana["ranking"][:3])],
+        } for semana in reversed(semanas[-4:])],
     })
 
 
@@ -278,8 +318,10 @@ def avaliar(request, pessoa_id):
     notas_antes = anterior.get("notas", {})
     nao_conhecia = set(anterior.get("nao_conhece", []))
 
-    # o que vem marcado: a escolha anterior (avaliações antigas podem ter notas quebradas, que não viram botão)
-    escolhas = {pid: int(v) for pid, v in notas_antes.items() if v in OPCOES_NOTA}
+    # o que vem marcado: a escolha anterior. Avaliação antiga (de 0 a 5, ou com notas quebradas) não vira botão,
+    # para ninguém salvar sem querer uma nota de outra escala.
+    nova = escala_nova(anterior)
+    escolhas = {pid: int(v) for pid, v in notas_antes.items() if nova and v in OPCOES_NOTA}
     escolhas.update(dict.fromkeys(nao_conhecia, NAO_CONHECO))
     erro = None
 
@@ -294,6 +336,7 @@ def avaliar(request, pessoa_id):
                 escolhas[p["id"]] = valor
         if not faltando:
             arm.salvar_avaliacao(pessoa_id, {
+                "escala": ESCALA,
                 "notas": {pid: v for pid, v in escolhas.items() if v != NAO_CONHECO},
                 "nao_conhece": [pid for pid, v in escolhas.items() if v == NAO_CONHECO],
             })
@@ -304,7 +347,7 @@ def avaliar(request, pessoa_id):
 
     def nota_anterior(pid):
         if pid in notas_antes:
-            return formatar_curto(notas_antes[pid])
+            return formatar_curto(notas_antes[pid]) + ("" if nova else " (de 0 a 5)")
         return "não conheço" if pid in nao_conhecia else ""
 
     return render(request, "votacao/avaliar.html", {
@@ -313,6 +356,7 @@ def avaliar(request, pessoa_id):
         "opcoes": OPCOES_NOTA,
         "nao_conheco": NAO_CONHECO,
         "anterior_data": _data(anterior),
+        "anterior_escala_antiga": bool(notas_antes) and not nova,
         "erro": erro,
     })
 
@@ -371,10 +415,65 @@ def painel(request):
     for linha in linhas:
         linha["nota_fmt"] = formatar(linha["nota"])
         linha["avaliou_data"] = _data(linha["avaliou"])
+    semanas = [{
+        **semana,
+        "quando": _data(semana),
+        "podio": [{"medalha": MEDALHAS[i + 1], "nome": r["nome"], "nota": formatar(r["nota"])}
+                  for i, r in enumerate(semana["ranking"][:3])],
+        "ranking_fmt": [{"posicao": i + 1, "nome": r["nome"], "nota": formatar(r["nota"]), "qtd": r["qtd"]}
+                        for i, r in enumerate(semana["ranking"])],
+    } for semana in reversed(arm.historico())]
     return _render_painel(request, "votacao/painel.html", {
         "linhas": linhas,
         "ja_avaliaram": sum(1 for linha in linhas if linha["avaliou"]),
+        "semanas": semanas,
     })
+
+
+def _retrato_da_semana():
+    """O que vai para o histórico: ranking (com médias), quem ficou sem nota, as linhas e quantos votaram."""
+    jogadores = arm.jogadores()
+    avaliacoes = arm.avaliacoes()
+    linhas_ranking = resultados(jogadores, avaliacoes)
+    linhas, _ = _montar_linhas(arm.linhas()["linhas"], jogadores)
+    return {
+        "jogadores": len(jogadores),
+        "votaram": sum(1 for p in jogadores if p["id"] in avaliacoes),
+        "ranking": [{"id": l["id"], "nome": l["nome"], "nota": round(l["nota"], 4), "qtd": l["qtd"]}
+                    for l in linhas_ranking if l["nota"] is not None],
+        "sem_nota": [{"id": l["id"], "nome": l["nome"]} for l in linhas_ranking if l["nota"] is None],
+        "linhas": [[p["nome"] for p in linha] for linha in linhas],
+    }
+
+
+@_exige_admin
+@require_POST
+def painel_fechar_semana(request):
+    retrato = _retrato_da_semana()
+    if not retrato["jogadores"]:
+        messages.error(request, "Ninguém na lista desta semana: não há o que guardar.")
+        return redirect("votacao:painel")
+    arm.guardar_semana(retrato)
+    feito = ["📚 Semana guardada no histórico"]
+    if request.POST.get("apagar_linhas"):
+        arm.apagar_linhas()
+        feito.append("linhas apagadas")
+    if request.POST.get("zerar"):
+        arm.zerar_avaliacoes()
+        feito.append("avaliações zeradas")
+    if request.POST.get("limpar_lista"):
+        arm.tirar_todos_da_semana()
+        feito.append("lista da semana esvaziada")
+    messages.success(request, ", ".join(feito) + ". Bora para a próxima! ⚽")
+    return redirect(reverse("votacao:painel") + "#historico")
+
+
+@_exige_admin
+@require_POST
+def painel_limpar_historico(request):
+    arm.limpar_historico()
+    messages.success(request, "🧹 Histórico apagado.")
+    return redirect(reverse("votacao:painel") + "#historico")
 
 
 @_exige_admin
@@ -479,15 +578,15 @@ def painel_linhas(request):
     } for i, linha in enumerate(linhas)]
     sem_nota = [p for p in jogadores if medias.get(p["id"]) is None]
 
-    # quem cai junto: as duplas guardadas e os grupos que elas formam com quem joga esta semana
+    # regras do sorteio (quem cai junto / quem não cai junto) e os grupos que os "juntos" formam esta semana
     todos = {p["id"]: _visual(p) for p in arm.pessoas()}
     nesta_semana = {p["id"] for p in jogadores}
-    duplas = [{
-        "a": todos[a], "b": todos[b], "fora": not {a, b} <= nesta_semana,
-    } for a, b in dados["juntos"] if a in todos and b in todos]
+    regras = [{
+        "regra": regra, "a": todos[a], "b": todos[b], "fora": not {a, b} <= nesta_semana,
+    } for regra in arm.REGRAS for a, b in dados[regra] if a in todos and b in todos]
     grupos = agrupar([p["id"] for p in jogadores], dados["juntos"])
     return _render_painel(request, "votacao/painel_linhas.html", {
-        "duplas": duplas,
+        "regras": regras,
         "grupos_grandes": [_nomes_em_frase([todos[j]["nome"] for j in grupo]) for grupo in grupos if len(grupo) > 2],
         "juntos_ids": {j for grupo in grupos for j in grupo},
         "jogadores": _por_nome(jogadores),
@@ -506,6 +605,7 @@ def painel_linhas(request):
         "publicado": dados["publicado"],
         "data": _data(dados),
         "media_geral": formatar(forca[sem_nota[0]["id"]]) if sem_nota and len(sem_nota) < len(jogadores) else "",
+        "texto_whatsapp": _texto_whatsapp(request, linhas, dados) if linhas else "",
     })
 
 
@@ -524,24 +624,31 @@ def _inteiro(texto, padrao, minimo, maximo):
 
 @_exige_admin
 @require_POST
-def painel_linhas_juntar(request):
-    a, b = request.POST.get("a", ""), request.POST.get("b", "")
+def painel_linhas_regra(request):
+    """Adiciona ou tira uma regra do sorteio: quem cai junto ("juntos") ou quem não cai junto ("separados")."""
+    regra, a, b = request.POST.get("regra"), request.POST.get("a", ""), request.POST.get("b", "")
+    volta = redirect(reverse("votacao:painel_linhas") + "#regras")
+    if regra not in arm.REGRAS:
+        return volta
+    if request.POST.get("acao") == "tirar":
+        arm.remover_regra(regra, a, b)
+        messages.success(request, "Regra tirada.")
+        return volta
     nomes = {p["id"]: p["nome"] for p in arm.jogadores()}
     if a not in nomes or b not in nomes or a == b:
         messages.error(request, "Escolha duas pessoas diferentes da lista desta semana.")
-    elif arm.juntar(a, b):
+        return volta
+    resultado = arm.adicionar_regra(regra, a, b)
+    if resultado == "contraria":
+        contraria = "não cai junto" if regra == "juntos" else "cai junto"
+        messages.error(request, f"{nomes[a]} e {nomes[b]} já estão em \"{contraria}\". Tire aquela regra primeiro.")
+    elif resultado == "repetida":
+        messages.success(request, "Essa regra já existe.")
+    elif regra == "juntos":
         messages.success(request, f"🤝 {nomes[a]} e {nomes[b]} vão cair juntos nos próximos sorteios.")
     else:
-        messages.success(request, f"{nomes[a]} e {nomes[b]} já estavam juntos.")
-    return redirect(reverse("votacao:painel_linhas") + "#juntos")
-
-
-@_exige_admin
-@require_POST
-def painel_linhas_separar(request):
-    arm.separar(request.POST.get("a", ""), request.POST.get("b", ""))
-    messages.success(request, "Dupla tirada de \"quem cai junto\".")
-    return redirect(reverse("votacao:painel_linhas") + "#juntos")
+        messages.success(request, f"🙅 {nomes[a]} e {nomes[b]} vão cair em linhas diferentes nos próximos sorteios.")
+    return volta
 
 
 @_exige_admin
@@ -552,6 +659,7 @@ def painel_linhas_sortear(request):
         messages.error(request, "Ninguém na lista desta semana para sortear.")
         return redirect("votacao:painel_linhas")
     ids = [p["id"] for p in jogadores]
+    nomes = {p["id"]: p["nome"] for p in jogadores}
     anterior = arm.linhas()
 
     divisao = "num_linhas" if request.POST.get("divisao") == "num_linhas" else "por_linha"
@@ -566,12 +674,19 @@ def painel_linhas_sortear(request):
 
     try:
         novas, dif = sortear(ids, forcas(ids, _medias_da_semana(jogadores)), tams, equilibrar, diferenca_max,
-                             juntos=anterior["juntos"])
+                             juntos=anterior["juntos"], separados=anterior["separados"])
     except GrupoNaoCabe as erro:
-        nomes = {p["id"]: p["nome"] for p in jogadores}
         messages.error(request, f"Não deu para sortear: {_nomes_em_frase(nomes[j] for j in erro.grupo)} têm que cair "
                                 f"juntos ({len(erro.grupo)} pessoas), mas as linhas têm no máximo {max(tams)} lugares. "
-                                "Aumente o tamanho das linhas ou tire alguma dupla de \"quem cai junto\".")
+                                "Aumente o tamanho das linhas ou tire alguma regra de \"cai junto\".")
+        return redirect("votacao:painel_linhas")
+    except RegrasEmConflito as erro:
+        messages.error(request, f"Não deu para sortear: {nomes[erro.a]} e {nomes[erro.b]} têm que cair juntos "
+                                "(pelas duplas de \"cai junto\") e separados ao mesmo tempo. Tire uma das regras.")
+        return redirect("votacao:painel_linhas")
+    except NaoDeuParaSeparar:
+        messages.error(request, "Não deu para sortear respeitando \"não cai junto\": não há linhas suficientes para "
+                                "separar todo mundo. Aumente o número de linhas ou tire alguma regra.")
         return redirect("votacao:painel_linhas")
     arm.salvar_sorteio(novas, por_linha, equilibrar, divisao=divisao, num_linhas=num_linhas,
                        diferenca_max=diferenca_max, diferenca=dif)
@@ -579,8 +694,9 @@ def painel_linhas_sortear(request):
     tamanhos_txt = ", ".join(str(len(linha)) for linha in novas)
     resumo = f"🎲 {len(novas)} linha(s) sorteada(s) ({tamanhos_txt} jogadores)"
     grupos = agrupar(ids, anterior["juntos"])
-    if grupos:
-        resumo += f", com {len(grupos)} grupo(s) de quem cai junto"
+    separacoes = [d for d in anterior["separados"] if set(d) <= set(ids)]
+    if grupos or separacoes:
+        resumo += f", respeitando {len(grupos) + len(separacoes)} regra(s)"
     if len(novas) > 1:
         resumo += f". Diferença entre a linha mais forte e a mais fraca: {formatar(dif)}"
         if equilibrar:

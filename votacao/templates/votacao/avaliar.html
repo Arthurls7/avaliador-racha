@@ -29,10 +29,11 @@
   .nota.nao-conhece { border-color: #f3dc94; }
   .nota.nao-conhece .escala span { opacity: .35; }
 
-  .escala { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 12px; }
+  /* 1 a 10 em duas fileiras de 5: cabe no celular com botões grandes para o dedo */
+  .escala { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 12px; }
   .escala label { position: relative; -webkit-tap-highlight-color: transparent; }
   .escala input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-  .escala span { display: grid; place-items: center; height: 50px; border-radius: 14px; border: 2px solid var(--borda);
+  .escala span { display: grid; place-items: center; height: 46px; border-radius: 14px; border: 2px solid var(--borda);
                  background: #fff; font-weight: 800; font-size: 1.2rem; color: var(--texto);
                  transition: background .1s, border-color .1s, transform .1s; }
   .escala label:hover span { border-color: var(--verde); }
@@ -52,7 +53,7 @@
   {% include "votacao/_avatar.html" with p=pessoa tamanho="grande" %}
   <div>
     <h1>Olá, {{ pessoa.nome }}!</h1>
-    {% if linhas %}<p class="suave">Dê uma nota de 0 a 5 para cada um. Não conhece alguém? Toque em 🤷 Não conheço.</p>{% endif %}
+    {% if linhas %}<p class="suave">Dê uma nota de 1 a 10 para cada um. Não conhece alguém? Toque em 🤷 Não conheço.</p>{% endif %}
   </div>
 </div>
 
@@ -60,11 +61,16 @@
   <div class="cartao">Ainda não tem mais ninguém na lista desta semana para avaliar.</div>
 {% else %}
   {% if anterior_data %}
-    <div class="msg info">Você já avaliou em {{ anterior_data }}. A nota que você deu aparece em cada cartão; mude o que quiser e salve de novo.</div>
+    {% if anterior_escala_antiga %}
+      <div class="msg info">Você avaliou em {{ anterior_data }}, quando as notas eram de 0 a 5. A nota antiga aparece em cada
+        cartão; dê as notas de novo, agora de 1 a 10.</div>
+    {% else %}
+      <div class="msg info">Você já avaliou em {{ anterior_data }}. A nota que você deu aparece em cada cartão; mude o que quiser e salve de novo.</div>
+    {% endif %}
   {% endif %}
   {% if erro %}<div class="msg error">{{ erro }}</div>{% endif %}
 
-  <div class="legenda" aria-hidden="true"><span>0 = ainda aprendendo</span><span>5 = craque ⭐</span></div>
+  <div class="legenda" aria-hidden="true"><span>1 = horrível</span><span>10 = neymar prime ⭐</span></div>
 
   <form method="post" id="form-notas">
     {% csrf_token %}

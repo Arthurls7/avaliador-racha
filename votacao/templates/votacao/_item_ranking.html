@@ -1,0 +1,11 @@
+<li data-posicao="{{ r.posicao }}">
+  <span class="pos">{{ r.posicao }}º</span>
+  {% include "votacao/_avatar.html" with p=r.pessoa tamanho="medio" %}
+  <span class="info">
+    <span class="nome-linha"><strong class="nome">{{ r.pessoa.nome }}</strong>
+      {% if r.mov %}<span class="mov {{ r.mov.tipo }}" title="{{ r.mov.titulo }}">{{ r.mov.texto }}</span>{% endif %}</span>
+    {% if r.tags %}
+      <span class="tags">{% for t in r.tags %}<span class="tag {{ t.tipo }}">{{ t.emoji }} {{ t.texto }}</span>{% endfor %}</span>
+    {% endif %}
+  </span>
+</li>

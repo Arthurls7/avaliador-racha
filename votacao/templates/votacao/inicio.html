@@ -23,6 +23,7 @@
   <h1>Quem é você? 👋</h1>
   <p class="suave">Toque em você e digite a sua senha de 4 números para avaliar a galera do racha desta semana. 🔑
     Depois disso, este celular lembra de você por {{ dias_conectado }} dias.</p>
+  {% include "votacao/_progresso.html" %}
   <div class="grade">
     {% for p in pessoas %}
       <a class="jogador{% if p.voce %} voce{% endif %}" href="{% url 'votacao:avaliar' p.id %}">

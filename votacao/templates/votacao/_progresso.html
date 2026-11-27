@@ -1,0 +1,6 @@
+<div class="progresso">
+  <div class="texto"><span>🗳️ {{ progresso.votaram }} de {{ progresso.total }} já votaram</span><span>{{ progresso.porcento }}%</span></div>
+  <div class="barra" role="progressbar" aria-label="Quantos já votaram" aria-valuemin="0"
+       aria-valuemax="{{ progresso.total }}" aria-valuenow="{{ progresso.votaram }}"><span style="width: {{ progresso.porcento }}%"></span></div>
+  {% if progresso.total and progresso.votaram == progresso.total %}<p class="todos">🎉 Todo mundo já votou!</p>{% endif %}
+</div>

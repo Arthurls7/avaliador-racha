@@ -11,6 +11,7 @@
 {% if linhas %}
   <h1>👥 Linhas</h1>
   <p class="suave">Sorteadas em {{ data }}. Bom jogo! ⚽</p>
+  {% include "votacao/_compartilhar_linhas.html" with texto=texto_whatsapp %}
   {% if trocas_ativas %}
     <div class="acoes pedir-troca">
       <a class="botao secundario" href="{% url 'votacao:sugerir_troca' %}">🔄 Sugerir troca de linha</a>

@@ -99,6 +99,8 @@
     .botao.perigo { background: var(--erro); border-color: var(--erro); }
     .botao.largo { width: 100%; padding: 14px 22px; font-size: 1.05rem; }
     .acoes { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    /* copiar / mandar no WhatsApp: mesma largura, um embaixo do outro no celular e lado a lado no computador */
+    .compartilhar { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin: 4px 0 14px; }
     /* a parte transparente da barra não pode "roubar" o toque de quem está embaixo */
     .barra-fixa { position: sticky; bottom: 0; padding: 12px 0 14px; margin-top: 8px; pointer-events: none;
                   background: linear-gradient(to bottom, rgba(244, 247, 241, 0), var(--fundo) 30%); }
@@ -153,6 +155,25 @@
                      font-weight: 800; box-shadow: 0 0 0 2px #fff; }
     .vazio { text-align: center; padding: 32px 16px; }
     .vazio .grande { font-size: 3rem; }
+
+    /* barrinha de quem já votou */
+    .progresso { margin: 14px 0 6px; }
+    .progresso .texto { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px;
+                        font-weight: 700; font-size: .92rem; }
+    .progresso .barra { height: 12px; border-radius: 999px; background: var(--borda); overflow: hidden; }
+    .progresso .barra span { display: block; height: 100%; border-radius: 999px;
+                             background: linear-gradient(90deg, var(--verde), #5ccf8d); }
+    .progresso .todos { margin: 6px 0 0; font-weight: 700; color: var(--verde-escuro); }
+
+    /* tags do ranking */
+    .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .tag { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 999px;
+           background: var(--fundo); color: var(--texto); font-size: .72rem; font-weight: 800; white-space: nowrap; }
+    .tag.ouro { background: #fff1bf; color: #7a5600; }
+    .tag.quente { background: #ffe3d8; color: #a33a12; }
+    .tag.alvo { background: #e2f0ff; color: #1d4f8a; }
+    .tag.novo { background: var(--verde-claro); color: var(--verde-escuro); }
+    .tag.suave { color: var(--suave); }
     {% block estilo %}{% endblock %}
   </style>
 </head>

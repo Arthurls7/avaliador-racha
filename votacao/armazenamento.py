@@ -15,16 +15,24 @@ dados/avaliacoes.json
 dados/linhas.json
     {"linhas": [["<id>", ...], ...], "publicado": false, "data": "...",
      "divisao": "por_linha" | "num_linhas", "por_linha": 5, "num_linhas": 3, "equilibrar": true,
-     "diferenca_max": 0.3, "diferenca": 0.12, "juntos": [["<id>", "<id>"], ...],
+     "diferenca_max": 0.5, "diferenca": 0.12, "juntos": [["<id>", "<id>"], ...], "separados": [[...], ...],
      "pedidos": [{"id": "a1b2c3d4", "jogador": "<id>", "tipo": "troca" | "mudar", "com": "<id>" | null,
                   "destino": 2 | null, "motivo": "...", "por": "<id de quem sugeriu>" | null, "data": "...",
                   "status": "pendente" | "aprovado" | "recusado", "resolvido_em": "..." | null}, ...]}
     As linhas (times) sorteadas; só aparecem na página inicial depois de publicadas.
     "divisao", "por_linha", "num_linhas", "equilibrar" e "diferenca_max" são as escolhas do último sorteio
     (o painel lembra delas); "diferenca" é a diferença entre a linha mais forte e a mais fraca naquele sorteio.
-    "juntos" são as duplas que têm que cair na mesma linha nos sorteios (valem até o organizador tirar).
+    "juntos" são as duplas que têm que cair na mesma linha nos sorteios e "separados", as que têm que cair em
+    linhas diferentes (as duas valem até o organizador tirar).
     "pedidos" é a fila de sugestões de troca de linha (quem está conectado sugere trocar dois jogadores);
     o organizador aprova ou recusa, na ordem em que chegaram.
+
+dados/historico.json
+    {"semanas": [{"data": "...", "jogadores": 15, "votaram": 9,
+                  "ranking": [{"id": "...", "nome": "...", "nota": 7.4, "qtd": 8}, ...],
+                  "sem_nota": ["Nome", ...], "linhas": [["Nome", ...], ...]}, ...]}
+    O retrato de cada semana fechada, da mais antiga para a mais nova (com os nomes, para não depender do
+    cadastro de hoje).
 
 As fotos ficam em MEDIA_ROOT/fotos/.
 """
@@ -55,6 +63,7 @@ except ImportError:
 LOGINS = "logins.json"
 AVALIACOES = "avaliacoes.json"
 LINHAS = "linhas.json"
+HISTORICO = "historico.json"
 FUSO = ZoneInfo("America/Maceio")
 TAMANHO_MAX_FOTO = 10 * 1024 * 1024
 
@@ -62,7 +71,8 @@ _PADRAO = {
     LOGINS: {"admin": None, "pessoas": []},
     AVALIACOES: {"avaliacoes": {}},
     LINHAS: {"linhas": [], "publicado": False, "data": None, "divisao": "por_linha", "por_linha": 5, "num_linhas": 2,
-             "equilibrar": True, "diferenca_max": 0.3, "juntos": [], "pedidos": []},
+             "equilibrar": True, "diferenca_max": 0.5, "juntos": [], "separados": [], "pedidos": []},
+    HISTORICO: {"semanas": []},
 }
 _trava_thread = threading.Lock()
 
@@ -274,7 +284,8 @@ def excluir_pessoa(pessoa_id):
     with editar(LINHAS) as dados:
         dados["linhas"] = [[j for j in linha if j != pessoa_id] for linha in dados["linhas"]]
         dados["pedidos"] = [p for p in dados.get("pedidos", []) if pessoa_id not in (p["jogador"], p.get("com"))]
-        dados["juntos"] = [dupla for dupla in dados.get("juntos", []) if pessoa_id not in dupla]
+        for regra in REGRAS:
+            dados[regra] = [dupla for dupla in dados.get(regra, []) if pessoa_id not in dupla]
     _apagar_foto(pessoa.get("foto"))
     return pessoa
 
@@ -388,20 +399,52 @@ def despublicar_linhas():
         dados["publicado"] = False
 
 
-def juntar(a, b):
-    """Marca que `a` e `b` têm que cair na mesma linha nos sorteios. Devolve False se a dupla já existia."""
-    with editar(LINHAS) as dados:
-        juntos = dados.setdefault("juntos", [])
-        if any(set(dupla) == {a, b} for dupla in juntos):
-            return False
-        juntos.append([a, b])
-    return True
+REGRAS = ("juntos", "separados")  # quem cai junto / quem não cai junto
 
 
-def separar(a, b):
-    """Tira a dupla `a` + `b` de "quem cai junto"."""
+def adicionar_regra(regra, a, b):
+    """Guarda a dupla em "juntos" ou "separados". Devolve "ok", "repetida" ou "contraria" (já está na outra)."""
+    outra = REGRAS[1 - REGRAS.index(regra)]
     with editar(LINHAS) as dados:
-        dados["juntos"] = [dupla for dupla in dados.get("juntos", []) if set(dupla) != {a, b}]
+        if any(set(dupla) == {a, b} for dupla in dados.get(regra, [])):
+            return "repetida"
+        if any(set(dupla) == {a, b} for dupla in dados.get(outra, [])):
+            return "contraria"
+        dados.setdefault(regra, []).append([a, b])
+    return "ok"
+
+
+def remover_regra(regra, a, b):
+    with editar(LINHAS) as dados:
+        dados[regra] = [dupla for dupla in dados.get(regra, []) if set(dupla) != {a, b}]
+
+
+def apagar_linhas():
+    """Apaga o sorteio (e a fila de trocas). As escolhas do sorteio e as regras continuam."""
+    with editar(LINHAS) as dados:
+        dados.update(linhas=[], publicado=False, data=None, pedidos=[])
+
+
+# ---------- historico.json ----------
+
+def historico():
+    return ler(HISTORICO)["semanas"]
+
+
+def guardar_semana(retrato):
+    with editar(HISTORICO) as dados:
+        dados["semanas"].append({**retrato, "data": agora()})
+
+
+def limpar_historico():
+    with editar(HISTORICO) as dados:
+        dados["semanas"] = []
+
+
+def tirar_todos_da_semana():
+    with editar(LOGINS) as dados:
+        for pessoa in dados["pessoas"]:
+            pessoa["joga"] = False
 
 
 # ---------- pedidos de troca de linha (também em linhas.json) ----------
