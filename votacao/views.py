@@ -34,6 +34,8 @@ MINUTOS_BLOQUEIO = 10
 # Sugestões de troca de linha pela galera (aba Linhas) e a aba "Trocas" do painel para aprovar.
 # Desligado: só o organizador ajusta as linhas, na aba Linhas do painel. Para religar, troque para True.
 TROCAS_ATIVAS = False
+ZONA_REBAIXAMENTO = 4  # os últimos do ranking público que ficam na "zona de rebaixamento"
+COOKIE_VER_LINHAS = "linhas_ver"  # "compacta" ou "completa": como a pessoa prefere ver as linhas públicas
 
 
 def _visual(pessoa):
@@ -176,13 +178,21 @@ def _linhas_publicadas():
 
 
 def ver_linhas(request):
+    """Linhas publicadas, com fotos ou numa lista compacta (?ver=compacta); o celular lembra a escolha."""
+    escolha = request.GET.get("ver")
+    if escolha not in ("completa", "compacta"):
+        escolha = None
     linhas, dados = _linhas_publicadas()
-    return render(request, "votacao/linhas.html", {
+    resposta = render(request, "votacao/linhas.html", {
         "linhas": [{"numero": i + 1, "cor": _cor_linha(i + 1), "jogadores": linha} for i, linha in enumerate(linhas)],
         "data": _data(dados),
         "trocas_ativas": TROCAS_ATIVAS,
         "texto_whatsapp": _texto_whatsapp(request, linhas, dados) if linhas else "",
+        "compacta": (escolha or request.COOKIES.get(COOKIE_VER_LINHAS)) == "compacta",
     })
+    if escolha:
+        resposta.set_cookie(COOKIE_VER_LINHAS, escolha, max_age=365 * 24 * 3600, samesite="Lax")
+    return resposta
 
 
 # ---------- sugestões de troca de linha (só quem está conectado, em fila; desligado com TROCAS_ATIVAS) ----------
@@ -240,6 +250,17 @@ def _dia(registro):
     return datetime.fromisoformat(registro["data"]).strftime("%d/%m") if registro.get("data") else ""
 
 
+def _secoes_do_ranking(ranking):
+    """Pódio (1º ao 3º), briga pelo pódio (4º ao 6º), o resto e a zona de rebaixamento.
+
+    A zona de rebaixamento são os ZONA_REBAIXAMENTO últimos, mas nunca pega o pódio: com poucas pessoas
+    ela fica menor (com 5 pessoas, só o 4º e o 5º) e engole a briga pelo pódio antes do resto.
+    """
+    z4 = max(3, len(ranking) - ZONA_REBAIXAMENTO)
+    return {"podio": ranking[:3], "disputa": ranking[3:min(6, z4)], "resto": ranking[6:z4],
+            "rebaixamento": ranking[z4:]}
+
+
 def ver_ranking(request):
     """Pódio, seções e tags; a média de cada um não aparece. Empates já vêm desfeitos por resultados()."""
     todos = [_visual(p) for p in arm.ativos()]  # todo mundo do cadastro (menos os desativados), jogando ou não
@@ -251,11 +272,11 @@ def ver_ranking(request):
     extras = destaques(com_nota, votaram, semanas)
     ranking = [{"posicao": i, "medalha": MEDALHAS.get(i, ""), "pessoa": linha["pessoa"], **extras[linha["id"]]}
                for i, linha in enumerate(com_nota, start=1)]
-    podio = ranking[:3]
+    secoes = _secoes_do_ranking(ranking)
+    podio = secoes["podio"]
     return render(request, "votacao/ranking.html", {
+        **secoes,
         "podio": [podio[i] for i in (1, 0, 2) if i < len(podio)],  # 2º, 1º, 3º, como num pódio de verdade
-        "disputa": ranking[3:6],
-        "resto": ranking[6:],
         "sem_nota": [linha["pessoa"] for linha in linhas if linha["nota"] is None],
         "progresso": _progresso([{"avaliou": p["id"] in votaram} for p in todos]),
         "semanas_anteriores": [{

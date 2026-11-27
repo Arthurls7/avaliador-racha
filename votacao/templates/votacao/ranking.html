@@ -5,27 +5,27 @@
   .cabecalho-ranking h1 { margin: 0; font-size: 1.7rem; }
   .cabecalho-ranking p { margin: 4px 0 0; }
 
-  /* pódio: 2º, 1º e 3º lado a lado, com degraus de alturas diferentes */
-  .podio { display: grid; grid-template-columns: 1fr 1.2fr 1fr; align-items: end; gap: 8px; margin: 22px 0 10px; }
+  /* pódio: 2º, 1º e 3º lado a lado, compacto, com degraus baixos e cores suaves */
+  .podio { display: grid; grid-template-columns: 1fr 1.15fr 1fr; align-items: end; gap: 8px;
+           max-width: 420px; margin: 26px auto 12px; }
   .degrau { display: flex; flex-direction: column; align-items: center; text-align: center; min-width: 0; }
-  .degrau .avatar { --tam: 66px; }
-  .degrau.p1 .avatar { --tam: 88px; box-shadow: 0 0 0 4px #fff, 0 0 0 7px #f2c230, 0 6px 18px rgba(201, 150, 0, .35); }
-  .degrau.p2 .avatar { box-shadow: 0 0 0 3px #fff, 0 0 0 6px #b8c0c9; }
-  .degrau.p3 .avatar { box-shadow: 0 0 0 3px #fff, 0 0 0 6px #d38b4f; }
-  .coroa { font-size: 1.9rem; line-height: 1; margin-bottom: 2px; animation: flutua 2.6s ease-in-out infinite; }
-  @keyframes flutua { 0%, 100% { transform: translateY(0) rotate(-6deg); } 50% { transform: translateY(-5px) rotate(6deg); } }
-  @media (prefers-reduced-motion: reduce) { .coroa { animation: none; } }
-  .degrau .nome { margin: 10px 0 4px; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; }
-  .degrau.p1 .nome { font-size: 1.12rem; }
-  .degrau .mov { margin-bottom: 4px; }
-  .degrau .tags { justify-content: center; margin-bottom: 8px; }
+  .degrau .foto { position: relative; display: block; }
+  .degrau .avatar { --tam: 54px; }
+  .degrau.p1 .avatar { --tam: 70px; box-shadow: 0 0 0 3px #fff, 0 0 0 5px #f2c230; }
+  .degrau.p2 .avatar { box-shadow: 0 0 0 3px #fff, 0 0 0 5px #c5ccd4; }
+  .degrau.p3 .avatar { box-shadow: 0 0 0 3px #fff, 0 0 0 5px #dba67c; }
+  .coroa { position: absolute; top: -19px; left: 50%; transform: translateX(-50%) rotate(-10deg);
+           font-size: 1.3rem; line-height: 1; }
+  .degrau .nome { margin: 9px 0 2px; font-size: .92rem; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; }
+  .degrau.p1 .nome { font-size: 1rem; }
+  .degrau .mov { margin-bottom: 2px; }
+  .degrau .tags { justify-content: center; margin: 2px 0 0; }
   .degrau .tag { white-space: normal; text-align: center; }
-  .base { width: 100%; display: grid; place-items: center; border-radius: 16px 16px 6px 6px; color: #fff;
-          font-size: 1.9rem; font-weight: 900; text-shadow: 0 2px 4px rgba(0, 0, 0, .2);
-          box-shadow: inset 0 -6px 0 rgba(0, 0, 0, .08), var(--sombra); }
-  .p1 .base { height: 110px; background: linear-gradient(160deg, #ffe27a, #e3a900); }
-  .p2 .base { height: 82px; background: linear-gradient(160deg, #eef1f4, #a9b2bd); }
-  .p3 .base { height: 64px; background: linear-gradient(160deg, #f6c08f, #c4773a); }
+  .base { width: 100%; display: grid; place-items: center; margin-top: 8px; border-radius: 12px 12px 4px 4px;
+          font-size: 1.3rem; }
+  .p1 .base { height: 58px; background: linear-gradient(180deg, #fff4c9, #fde68f); }
+  .p2 .base { height: 44px; background: linear-gradient(180deg, #f4f6f8, #e0e5ea); }
+  .p3 .base { height: 34px; background: linear-gradient(180deg, #fcebdc, #f3d2b6); }
 
   .secao h2 { display: flex; align-items: center; gap: 8px; }
   .secao .subtitulo { margin: -4px 0 8px; }
@@ -35,12 +35,18 @@
   .lista-ranking .pos { width: 2.4rem; flex: none; text-align: center; font-size: 1.15rem; font-weight: 900; color: var(--suave); }
   .lista-ranking .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
   .lista-ranking .nome { overflow-wrap: anywhere; }
+  .lista-ranking .tag { max-width: 100%; white-space: normal; }  /* em tela estreita, a tag quebra em vez de estourar */
+  @media (max-width: 360px) { .lista-ranking li { gap: 8px; } .lista-ranking .pos { width: 2.1rem; } }
   .nome-linha { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .mov { display: inline-block; padding: 0 6px; border-radius: 6px; font-size: .75rem; font-weight: 900; }
   .mov.sobe { background: var(--verde-claro); color: var(--verde-escuro); }
   .mov.desce { background: #fdecea; color: var(--erro); }
   .mov.igual { background: var(--fundo); color: var(--suave); }
   .disputa { border: 2px solid #ffd9a8; background: linear-gradient(180deg, #fff8ee, #fff 60%); }
+  /* zona de rebaixamento: como na tabela do campeonato, a posição fica num quadradinho vermelho */
+  .rebaixamento { border: 2px solid #f5c0ba; background: linear-gradient(180deg, #fff0ee, #fff 60%); }
+  .rebaixamento h2 { color: var(--erro); }
+  .rebaixamento .lista-ranking .pos { padding: 4px 0; border-radius: 8px; background: var(--erro); color: #fff; font-size: 1rem; }
 
   .sem-nota { display: flex; flex-wrap: wrap; gap: 8px; }
   .sem-nota span { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px; border-radius: 999px;
@@ -64,11 +70,10 @@
   <section class="podio" aria-label="Pódio">
     {% for r in podio %}
       <div class="degrau p{{ r.posicao }}" data-posicao="{{ r.posicao }}">
-        {% if r.posicao == 1 %}<span class="coroa" aria-hidden="true">👑</span>{% endif %}
-        {% include "votacao/_avatar.html" with p=r.pessoa tamanho="grande" %}
+        <span class="foto">{% if r.posicao == 1 %}<span class="coroa" aria-hidden="true">👑</span>{% endif %}{% include "votacao/_avatar.html" with p=r.pessoa tamanho="grande" %}</span>
         <strong class="nome">{{ r.pessoa.nome }}</strong>
         {% if r.mov %}<span class="mov {{ r.mov.tipo }}" title="{{ r.mov.titulo }}">{{ r.mov.texto }}</span>{% endif %}
-        {% if r.tags %}<span class="tags">{% for t in r.tags|slice:":2" %}<span class="tag {{ t.tipo }}">{{ t.emoji }} {{ t.texto }}</span>{% endfor %}</span>{% endif %}
+        {% if r.tags %}<span class="tags">{% for t in r.tags|slice:":1" %}<span class="tag {{ t.tipo }}">{{ t.emoji }} {{ t.texto }}</span>{% endfor %}</span>{% endif %}
         <div class="base">{{ r.medalha }}</div>
       </div>
     {% endfor %}
@@ -83,9 +88,17 @@
 
   {% if resto %}
     <section class="cartao secao">
-      <h2>⚽ O resto da galera</h2>
+      <h2>⚽ Só o básico</h2>
       <p class="suave pequeno subtitulo">Toda semana é uma chance nova. Bora subir! 💪</p>
       <ol class="lista-ranking">{% for r in resto %}{% include "votacao/_item_ranking.html" %}{% endfor %}</ol>
+    </section>
+  {% endif %}
+
+  {% if rebaixamento %}
+    <section class="cartao secao rebaixamento">
+      <h2>🔻 Zona de rebaixamento</h2>
+      <p class="suave pequeno subtitulo">{% if rebaixamento|length == 1 %}O último{% else %}Os {{ rebaixamento|length }} últimos{% endif %} da tabela. Ainda dá tempo de escapar! 😅</p>
+      <ol class="lista-ranking">{% for r in rebaixamento %}{% include "votacao/_item_ranking.html" %}{% endfor %}</ol>
     </section>
   {% endif %}
 {% else %}
@@ -112,14 +125,19 @@
       <ul>
         <li><span class="tag ouro">👑 Craque da galera</span> 1º lugar. Se já era o 1º na semana passada: <span class="tag ouro">👑 Segue no topo</span></li>
         <li><span class="tag ouro">🏅 Campeão da última semana</span> foi o 1º na última semana fechada</li>
-        <li><span class="tag quente">🚀 Em alta</span> subiu 3 posições ou mais desde a última semana</li>
-        <li><span class="tag novo">🆕 Estreante</span> primeira vez no ranking</li>
+        <li><span class="tag quente">🚀 Em alta</span> <span class="tag frio">📉 Em baixa</span> subiu ou caiu 3 posições ou mais desde a última semana</li>
+        <li><span class="tag lanterna">🏮 Pior do racha</span> o último da tabela</li>
+        <li><span class="tag quente">🔥 Quente</span> só recebeu notas acima de 7</li>
+        <li><span class="tag neutro">😐 Mediano</span> só recebeu notas de 4 a 7</li>
+        <li><span class="tag frio">🧊 Gelado</span> só recebeu notas abaixo de 4</li>
         <li><span class="tag alvo">🎯 Unanimidade</span> todo mundo deu notas parecidas</li>
         <li><span class="tag quente">🌶️ Polêmico</span> uns acham craque, outros nem tanto</li>
         <li><span class="tag alvo">🌟 Todo mundo conhece</span> recebeu nota de todos que votaram</li>
+        <li><span class="tag neutro">🕵️ Misterioso</span> pouca gente conhece: recebeu nota de menos da metade de quem votou</li>
         <li><span class="tag suave">🗳️ Já votou</span> já deu as notas desta semana</li>
         <li><span class="mov sobe">▲2</span> <span class="mov desce">▼1</span> quanto subiu ou desceu desde a última semana</li>
       </ul>
+      <p class="suave pequeno">No pódio aparece só a tag principal de cada um; na lista, até 4.</p>
     </details>
   </section>
 {% endif %}
