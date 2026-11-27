@@ -14,7 +14,7 @@ from django.urls import reverse
 
 from . import armazenamento as arm
 from .notas import ler_nota, resultados
-from .sorteio import diferenca, forcas, sortear, tamanhos, tamanhos_por_quantidade
+from .sorteio import GrupoNaoCabe, agrupar, diferenca, forcas, sortear, tamanhos, tamanhos_por_quantidade
 from .trocas import aplicar, comparar, descrever
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
@@ -110,6 +110,31 @@ class SorteioTest(SimpleTestCase):
         sorteios = {tuple(sorted(tuple(sorted(l)) for l in sortear(ids, dict.fromkeys(ids, 3), [5, 5])[0]))
                     for _ in range(10)}
         self.assertGreater(len(sorteios), 1)
+
+    def test_agrupar_duplas(self):
+        # duplas encadeadas viram um grupo; quem não está na lista é ignorado
+        self.assertEqual(agrupar(list("abcdefg"), [("a", "b"), ("b", "c"), ("d", "e"), ("x", "a")]),
+                         [["a", "b", "c"], ["d", "e"]])
+        self.assertEqual(agrupar(list("abc"), []), [])
+
+    def test_quem_cai_junto_fica_na_mesma_linha(self):
+        aleatorio = random.Random(5)
+        ids = [f"j{i}" for i in range(17)]
+        forca = {j: round(aleatorio.uniform(0, 5), 2) for j in ids}
+        juntos = [("j0", "j1"), ("j1", "j2"), ("j7", "j8"), ("j12", "j16")]
+        for tams in [tamanhos(17, 5), tamanhos_por_quantidade(17, 3)]:
+            for equilibrar in [True, False]:
+                for _ in range(15):
+                    linhas, dif = sortear(ids, forca, tams, equilibrar, 0.3, juntos=juntos)
+                    onde = {j: i for i, linha in enumerate(linhas) for j in linha}
+                    self.assertTrue(all(onde[a] == onde[b] for a, b in juntos))
+                    self.assertEqual([len(l) for l in linhas], tams)
+                    self.assertEqual(sorted(onde), sorted(ids))
+
+    def test_grupo_que_nao_cabe(self):
+        with self.assertRaises(GrupoNaoCabe) as erro:
+            sortear(list("abcdef"), dict.fromkeys("abcdef", 3), [2, 2, 2], juntos=[("a", "b"), ("b", "c")])
+        self.assertEqual(sorted(erro.exception.grupo), ["a", "b", "c"])
 
     def test_sorteio_puro(self):
         forca = {"a": 5, "b": 5, "c": 1, "d": 1}
@@ -509,6 +534,49 @@ class FluxoTest(SimpleTestCase):
         self.client.post(sortear, {"divisao": "por_linha", "por_linha": "2"})
         self.assertEqual([len(l) for l in arm.linhas()["linhas"]], [2, 2, 1])
 
+    def test_quem_cai_junto_no_painel(self):
+        self.entrar()
+        juntar, separar = reverse("votacao:painel_linhas_juntar"), reverse("votacao:painel_linhas_separar")
+        sortear = reverse("votacao:painel_linhas_sortear")
+        resposta = self.client.post(juntar, {"a": "ana", "b": "bruno"}, follow=True)
+        self.assertRedirects(resposta, reverse("votacao:painel_linhas") + "#juntos")
+        self.assertContains(resposta, "Ana e Bruno vão cair juntos")
+        self.assertEqual(arm.linhas()["juntos"], [["ana", "bruno"]])
+        # repetida (em qualquer ordem) ou a mesma pessoa duas vezes não entra
+        self.assertContains(self.client.post(juntar, {"a": "bruno", "b": "ana"}, follow=True), "já estavam juntos")
+        self.assertContains(self.client.post(juntar, {"a": "ana", "b": "ana"}, follow=True), "duas pessoas diferentes")
+        self.assertEqual(len(arm.linhas()["juntos"]), 1)
+
+        # o sorteio sempre põe os dois juntos (e continua valendo nos próximos sorteios)
+        for _ in range(10):
+            self.client.post(sortear, {"divisao": "num_linhas", "num_linhas": "2", "equilibrar": "on"})
+            linhas = arm.linhas()["linhas"]
+            self.assertTrue(any({"ana", "bruno"} <= set(linha) for linha in linhas), linhas)
+        pagina = self.client.get(reverse("votacao:painel_linhas"))
+        self.assertContains(pagina, 'title="Cai junto com alguém"', count=2)
+        resposta = self.client.post(sortear, {"divisao": "num_linhas", "num_linhas": "2"}, follow=True)
+        self.assertContains(resposta, "com 1 grupo(s) de quem cai junto")
+
+        # duplas encadeadas viram um grupo; se não couber na linha, o sorteio não acontece
+        self.client.post(juntar, {"a": "bruno", "b": "caio"})
+        self.assertContains(self.client.get(reverse("votacao:painel_linhas")),
+                            "Juntando as duplas, Ana, Bruno e Caio vão cair na mesma linha")
+        antes = arm.linhas()["linhas"]
+        resposta = self.client.post(sortear, {"divisao": "num_linhas", "num_linhas": "2"}, follow=True)
+        self.assertContains(resposta, "Não deu para sortear: Ana, Bruno e Caio têm que cair juntos (3 pessoas)")
+        self.assertEqual(arm.linhas()["linhas"], antes)
+
+        # tirar a dupla; quem sai da semana não conta, e quem é excluído some das duplas
+        self.client.post(separar, {"a": "caio", "b": "bruno"})
+        self.assertEqual(arm.linhas()["juntos"], [["ana", "bruno"]])
+        self.client.post(juntar, {"a": "caio", "b": "davi"})
+        arm.salvar_cadastro({"davi"}, {}, set())  # Davi fora desta semana
+        self.assertContains(self.client.get(reverse("votacao:painel_linhas")), "não joga esta semana: não conta")
+        self.client.post(sortear, {"divisao": "por_linha", "por_linha": "2"})
+        self.assertEqual(sorted(sum(arm.linhas()["linhas"], [])), ["ana", "bruno", "caio"])
+        arm.excluir_pessoa("bruno")
+        self.assertEqual(arm.linhas()["juntos"], [["caio", "davi"]])
+
     def test_aviso_quando_o_limite_nao_cabe(self):
         self.entrar()
         arm.adicionar_pessoas(["Ana", "Bruno"], somente_estes=True)
@@ -795,10 +863,13 @@ class FluxoTest(SimpleTestCase):
         senha_ana = self.senha("ana")
         for nome in ["painel_adicionar", "painel_cadastro_salvar", "painel_excluir", "painel_zerar", "painel_remover_foto",
                      "painel_nova_senha", "painel_linhas_sortear", "painel_linhas_publicar",
-                     "painel_linhas_despublicar", "painel_linhas_ajustar"]:
-            resposta = self.client.post(reverse(f"votacao:{nome}"), {"nomes": "Hacker", "id": "ana", "ids": ["ana"]})
+                     "painel_linhas_despublicar", "painel_linhas_ajustar", "painel_linhas_juntar",
+                     "painel_linhas_separar"]:
+            resposta = self.client.post(reverse(f"votacao:{nome}"), {"nomes": "Hacker", "id": "ana", "ids": ["ana"],
+                                                                     "a": "ana", "b": "bruno"})
             self.assertRedirects(resposta, reverse("votacao:painel_entrar"))
         self.assertEqual(len(arm.jogadores()), 4)
+        self.assertEqual(arm.linhas()["juntos"], [])
         self.assertEqual(self.senha("ana"), senha_ana)
         self.assertEqual((arm.linhas()["linhas"], arm.linhas()["publicado"]), ([["ana", "bruno"]], True))
         resposta = self.client.post(reverse("votacao:painel_entrar"), {"usuario": "chefe", "senha": "errada"})

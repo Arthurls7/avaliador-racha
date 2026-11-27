@@ -14,7 +14,7 @@ from django.views.decorators.http import require_POST
 from . import armazenamento as arm
 from . import trocas
 from .notas import NAO_CONHECO, OPCOES_NOTA, formatar, formatar_curto, ler_nota, resultados
-from .sorteio import diferenca, forcas, sortear, tamanhos, tamanhos_por_quantidade
+from .sorteio import GrupoNaoCabe, agrupar, diferenca, forcas, sortear, tamanhos, tamanhos_por_quantidade
 
 # cores do círculo com as iniciais de quem ainda não tem foto (todas com bom contraste para texto branco)
 CORES = ["#d1495b", "#00798c", "#30638e", "#6a4c93", "#2b9348", "#c8553d", "#3d5a80", "#b5179e", "#7c6a0a"]
@@ -478,7 +478,19 @@ def painel_linhas(request):
         "media_fmt": formatar(sum(forca[p["id"]] for p in linha) / len(linha)),
     } for i, linha in enumerate(linhas)]
     sem_nota = [p for p in jogadores if medias.get(p["id"]) is None]
+
+    # quem cai junto: as duplas guardadas e os grupos que elas formam com quem joga esta semana
+    todos = {p["id"]: _visual(p) for p in arm.pessoas()}
+    nesta_semana = {p["id"] for p in jogadores}
+    duplas = [{
+        "a": todos[a], "b": todos[b], "fora": not {a, b} <= nesta_semana,
+    } for a, b in dados["juntos"] if a in todos and b in todos]
+    grupos = agrupar([p["id"] for p in jogadores], dados["juntos"])
     return _render_painel(request, "votacao/painel_linhas.html", {
+        "duplas": duplas,
+        "grupos_grandes": [_nomes_em_frase([todos[j]["nome"] for j in grupo]) for grupo in grupos if len(grupo) > 2],
+        "juntos_ids": {j for grupo in grupos for j in grupo},
+        "jogadores": _por_nome(jogadores),
         "blocos": blocos,
         "fora": [com_nota(p) for p in fora],
         "numeros": range(1, len(blocos) + 1),
@@ -497,11 +509,39 @@ def painel_linhas(request):
     })
 
 
+def _nomes_em_frase(nomes):
+    """["Ana", "Bia", "Caio"] -> "Ana, Bia e Caio"."""
+    nomes = list(nomes)
+    return nomes[0] if len(nomes) == 1 else ", ".join(nomes[:-1]) + " e " + nomes[-1]
+
+
 def _inteiro(texto, padrao, minimo, maximo):
     try:
         return min(max(int(texto), minimo), maximo)
     except (TypeError, ValueError):
         return padrao
+
+
+@_exige_admin
+@require_POST
+def painel_linhas_juntar(request):
+    a, b = request.POST.get("a", ""), request.POST.get("b", "")
+    nomes = {p["id"]: p["nome"] for p in arm.jogadores()}
+    if a not in nomes or b not in nomes or a == b:
+        messages.error(request, "Escolha duas pessoas diferentes da lista desta semana.")
+    elif arm.juntar(a, b):
+        messages.success(request, f"🤝 {nomes[a]} e {nomes[b]} vão cair juntos nos próximos sorteios.")
+    else:
+        messages.success(request, f"{nomes[a]} e {nomes[b]} já estavam juntos.")
+    return redirect(reverse("votacao:painel_linhas") + "#juntos")
+
+
+@_exige_admin
+@require_POST
+def painel_linhas_separar(request):
+    arm.separar(request.POST.get("a", ""), request.POST.get("b", ""))
+    messages.success(request, "Dupla tirada de \"quem cai junto\".")
+    return redirect(reverse("votacao:painel_linhas") + "#juntos")
 
 
 @_exige_admin
@@ -524,12 +564,23 @@ def painel_linhas_sortear(request):
     except ValueError:
         diferenca_max = anterior["diferenca_max"]
 
-    novas, dif = sortear(ids, forcas(ids, _medias_da_semana(jogadores)), tams, equilibrar, diferenca_max)
+    try:
+        novas, dif = sortear(ids, forcas(ids, _medias_da_semana(jogadores)), tams, equilibrar, diferenca_max,
+                             juntos=anterior["juntos"])
+    except GrupoNaoCabe as erro:
+        nomes = {p["id"]: p["nome"] for p in jogadores}
+        messages.error(request, f"Não deu para sortear: {_nomes_em_frase(nomes[j] for j in erro.grupo)} têm que cair "
+                                f"juntos ({len(erro.grupo)} pessoas), mas as linhas têm no máximo {max(tams)} lugares. "
+                                "Aumente o tamanho das linhas ou tire alguma dupla de \"quem cai junto\".")
+        return redirect("votacao:painel_linhas")
     arm.salvar_sorteio(novas, por_linha, equilibrar, divisao=divisao, num_linhas=num_linhas,
                        diferenca_max=diferenca_max, diferenca=dif)
 
     tamanhos_txt = ", ".join(str(len(linha)) for linha in novas)
     resumo = f"🎲 {len(novas)} linha(s) sorteada(s) ({tamanhos_txt} jogadores)"
+    grupos = agrupar(ids, anterior["juntos"])
+    if grupos:
+        resumo += f", com {len(grupos)} grupo(s) de quem cai junto"
     if len(novas) > 1:
         resumo += f". Diferença entre a linha mais forte e a mais fraca: {formatar(dif)}"
         if equilibrar:

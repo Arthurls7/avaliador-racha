@@ -15,13 +15,14 @@ dados/avaliacoes.json
 dados/linhas.json
     {"linhas": [["<id>", ...], ...], "publicado": false, "data": "...",
      "divisao": "por_linha" | "num_linhas", "por_linha": 5, "num_linhas": 3, "equilibrar": true,
-     "diferenca_max": 0.3, "diferenca": 0.12,
+     "diferenca_max": 0.3, "diferenca": 0.12, "juntos": [["<id>", "<id>"], ...],
      "pedidos": [{"id": "a1b2c3d4", "jogador": "<id>", "tipo": "troca" | "mudar", "com": "<id>" | null,
                   "destino": 2 | null, "motivo": "...", "por": "<id de quem sugeriu>" | null, "data": "...",
                   "status": "pendente" | "aprovado" | "recusado", "resolvido_em": "..." | null}, ...]}
     As linhas (times) sorteadas; só aparecem na página inicial depois de publicadas.
     "divisao", "por_linha", "num_linhas", "equilibrar" e "diferenca_max" são as escolhas do último sorteio
     (o painel lembra delas); "diferenca" é a diferença entre a linha mais forte e a mais fraca naquele sorteio.
+    "juntos" são as duplas que têm que cair na mesma linha nos sorteios (valem até o organizador tirar).
     "pedidos" é a fila de sugestões de troca de linha (quem está conectado sugere trocar dois jogadores);
     o organizador aprova ou recusa, na ordem em que chegaram.
 
@@ -61,7 +62,7 @@ _PADRAO = {
     LOGINS: {"admin": None, "pessoas": []},
     AVALIACOES: {"avaliacoes": {}},
     LINHAS: {"linhas": [], "publicado": False, "data": None, "divisao": "por_linha", "por_linha": 5, "num_linhas": 2,
-             "equilibrar": True, "diferenca_max": 0.3, "pedidos": []},
+             "equilibrar": True, "diferenca_max": 0.3, "juntos": [], "pedidos": []},
 }
 _trava_thread = threading.Lock()
 
@@ -273,6 +274,7 @@ def excluir_pessoa(pessoa_id):
     with editar(LINHAS) as dados:
         dados["linhas"] = [[j for j in linha if j != pessoa_id] for linha in dados["linhas"]]
         dados["pedidos"] = [p for p in dados.get("pedidos", []) if pessoa_id not in (p["jogador"], p.get("com"))]
+        dados["juntos"] = [dupla for dupla in dados.get("juntos", []) if pessoa_id not in dupla]
     _apagar_foto(pessoa.get("foto"))
     return pessoa
 
@@ -384,6 +386,22 @@ def despublicar_linhas():
     """Esconde as linhas da página inicial (o sorteio continua salvo para ajustar e publicar de novo)."""
     with editar(LINHAS) as dados:
         dados["publicado"] = False
+
+
+def juntar(a, b):
+    """Marca que `a` e `b` têm que cair na mesma linha nos sorteios. Devolve False se a dupla já existia."""
+    with editar(LINHAS) as dados:
+        juntos = dados.setdefault("juntos", [])
+        if any(set(dupla) == {a, b} for dupla in juntos):
+            return False
+        juntos.append([a, b])
+    return True
+
+
+def separar(a, b):
+    """Tira a dupla `a` + `b` de "quem cai junto"."""
+    with editar(LINHAS) as dados:
+        dados["juntos"] = [dupla for dupla in dados.get("juntos", []) if set(dupla) != {a, b}]
 
 
 # ---------- pedidos de troca de linha (também em linhas.json) ----------

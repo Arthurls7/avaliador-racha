@@ -11,6 +11,10 @@ Sorteio:
    (`diferenca_max`). Limite maior = para antes = mais sorte; limite 0 = o mais equilibrado possível.
 3. Tenta de novo, partindo de outro embaralhamento, até achar um resultado dentro do limite.
    Se nenhum couber no limite, devolve o mais equilibrado que achou (e quem chamou avisa).
+
+Quem cai junto: o organizador pode marcar duplas que têm que ficar na mesma linha. Duplas encadeadas viram
+um grupo (Ana+Bia e Bia+Caio = os três juntos). Cada grupo vai inteiro para uma linha sorteada e não é
+separado pelo equilíbrio, que só troca quem está livre.
 """
 
 import math
@@ -18,6 +22,33 @@ import random
 from itertools import combinations
 
 TENTATIVAS = 30
+
+
+class GrupoNaoCabe(Exception):
+    """Um grupo de "quem cai junto" não cabe em nenhuma linha (ex.: 3 juntos com linhas de 2)."""
+
+    def __init__(self, grupo):
+        super().__init__(grupo)
+        self.grupo = grupo
+
+
+def agrupar(ids, juntos):
+    """Junta as duplas em grupos (só com quem está em `ids`). Devolve os grupos de 2 ou mais pessoas."""
+    pai = {j: j for j in ids}
+
+    def raiz(j):
+        while pai[j] != j:
+            pai[j] = pai[pai[j]]
+            j = pai[j]
+        return j
+
+    for a, b in juntos:
+        if a in pai and b in pai:
+            pai[raiz(a)] = raiz(b)
+    grupos = {}
+    for j in ids:
+        grupos.setdefault(raiz(j), []).append(j)
+    return [grupo for grupo in grupos.values() if len(grupo) > 1]
 
 
 def tamanhos(total, por_linha):
@@ -62,8 +93,11 @@ def _espalhamento(somas, tams):
     return max(medias) - min(medias)
 
 
-def _equilibrar(linhas, forca, alvo):
-    """Troca jogadores entre linhas enquanto melhorar, parando assim que a diferença ficar <= alvo."""
+def _equilibrar(linhas, forca, alvo, fixos=frozenset()):
+    """Troca jogadores entre linhas enquanto melhorar, parando assim que a diferença ficar <= alvo.
+
+    Quem está em `fixos` (faz parte de um grupo de "quem cai junto") não é trocado.
+    """
     somas = [sum(forca[j] for j in linha) for linha in linhas]
     tams = [len(linha) for linha in linhas]
     if _espalhamento(somas, tams) <= alvo:
@@ -76,6 +110,8 @@ def _equilibrar(linhas, forca, alvo):
             la, lb = linhas[a], linhas[b]
             for i in range(len(la)):
                 for k in range(len(lb)):
+                    if la[i] in fixos or lb[k] in fixos:
+                        continue
                     diferenca_troca = forca[lb[k]] - forca[la[i]]
                     somas[a] += diferenca_troca
                     somas[b] -= diferenca_troca
@@ -90,18 +126,46 @@ def _equilibrar(linhas, forca, alvo):
                         somas[b] += diferenca_troca
 
 
-def sortear(ids, forca, tams, equilibrar=True, diferenca_max=0.0):
-    """Devolve (linhas, diferença), em que cada linha é uma lista de ids com os tamanhos `tams`."""
-    def dividir():
-        embaralhados = random.sample(list(ids), len(ids))
-        linhas, inicio = [], 0
-        for t in tams:
-            linhas.append(embaralhados[inicio:inicio + t])
-            inicio += t
-        return linhas
+def _dividir(ids, tams, grupos):
+    """Embaralha e divide nos tamanhos `tams`, cada grupo inteiro numa linha. None se algum grupo não couber."""
+    linhas = [[] for _ in tams]
+    # grupos maiores primeiro (são os mais difíceis de encaixar), cada um numa linha com lugar, ao acaso
+    for grupo in sorted(random.sample(grupos, len(grupos)), key=len, reverse=True):
+        com_lugar = [i for i, t in enumerate(tams) if t - len(linhas[i]) >= len(grupo)]
+        if not com_lugar:
+            return None
+        linhas[random.choice(com_lugar)].extend(grupo)
+    agrupados = {j for grupo in grupos for j in grupo}
+    livres = [j for j in ids if j not in agrupados]
+    livres = random.sample(livres, len(livres))
+    for i, t in enumerate(tams):
+        falta = t - len(linhas[i])
+        linhas[i].extend(livres[:falta])
+        livres = livres[falta:]
+    return linhas
 
+
+def sortear(ids, forca, tams, equilibrar=True, diferenca_max=0.0, juntos=()):
+    """Devolve (linhas, diferença), em que cada linha é uma lista de ids com os tamanhos `tams`.
+
+    `juntos` são duplas de ids que têm que cair na mesma linha. Levanta GrupoNaoCabe se não der.
+    """
     if not ids:
         return [], 0.0
+    grupos = agrupar(list(ids), juntos)
+    maior = max(grupos, key=len, default=[])
+    if len(maior) > max(tams):
+        raise GrupoNaoCabe(maior)
+    fixos = frozenset(j for grupo in grupos for j in grupo)
+
+    def dividir():
+        # a divisão é ao acaso; com grupos, pode precisar de algumas tentativas para encaixar todo mundo
+        for _ in range(50):
+            linhas = _dividir(ids, tams, grupos)
+            if linhas is not None:
+                return linhas
+        raise GrupoNaoCabe(maior)
+
     if not equilibrar or len(tams) < 2:
         linhas = dividir()
         return linhas, diferenca(linhas, forca)
@@ -110,7 +174,7 @@ def sortear(ids, forca, tams, equilibrar=True, diferenca_max=0.0):
     resultados = []
     for _ in range(TENTATIVAS):
         linhas = dividir()
-        _equilibrar(linhas, forca, alvo)
+        _equilibrar(linhas, forca, alvo, fixos)
         dif = diferenca(linhas, forca)
         if diferenca_max > 0 and dif <= alvo:
             return linhas, dif  # dentro do limite: aceita (quanto maior o limite, mais cedo e mais variado)
