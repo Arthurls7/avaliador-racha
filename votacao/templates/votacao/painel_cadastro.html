@@ -6,6 +6,11 @@
                  border-bottom: 1px solid var(--borda); }
   .cadastro li:last-child { border-bottom: 0; }
   .cadastro li.fora { opacity: .55; }
+  .cadastro li.desativado .avatar { filter: grayscale(1); }
+  .estado-desativado { font-size: .78rem; font-weight: 800; color: var(--suave); white-space: nowrap; }
+  .reativar { flex: none; padding: 7px 12px; border-radius: 999px; font: inherit; font-size: .85rem; font-weight: 700;
+              background: #fff; color: var(--verde-escuro); border: 2px solid var(--verde); white-space: nowrap;
+              cursor: pointer; }
   .campo-nome { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .campo-nome input[type=text] { width: 100%; padding: 8px 10px; }
   .senha-pessoa { font-size: .82rem; color: var(--suave); padding-left: 2px; }
@@ -39,18 +44,20 @@
 {% block conteudo %}
 <h1>🗂️ Cadastro</h1>
 <section class="cartao">
-  <h2>👥 Todo mundo que já jogou ({{ cadastro|length }})</h2>
+  <h2>👥 Todo mundo que já jogou ({{ cadastro|length }}{% if desativados %}, {{ desativados }} desativado{{ desativados|pluralize }}{% endif %})</h2>
   {% if cadastro %}
     <p class="suave pequeno">🔑 Cada um vota com a própria senha de 4 números: mande a senha para cada pessoa
       no privado. Toque na foto para trocar (fica com anel verde até você salvar). Marque quem
-      <strong>joga</strong> esta semana. Renomear não perde as avaliações.
+      <strong>joga</strong> esta semana (é quem entra no sorteio das linhas; votar e aparecer no ranking,
+      todo mundo do cadastro aparece). 💤 desativa alguém: a pessoa não joga, some do início e do ranking
+      e as notas que ela deu não contam (nada é apagado; reativando, tudo volta). Renomear não perde as avaliações.
       <button type="button" class="marcar" data-marcar="1">Marcar todos</button> ·
       <button type="button" class="marcar" data-marcar="0">Desmarcar todos</button></p>
     <form method="post" action="{% url 'votacao:painel_cadastro_salvar' %}" enctype="multipart/form-data" id="form-cadastro">
       {% csrf_token %}
       <ul class="cadastro">
         {% for p in cadastro %}
-          <li class="{% if not p.joga %}fora{% endif %}">
+          <li class="{% if not p.joga %}fora{% endif %}{% if not p.ativo %} desativado{% endif %}">
             <input type="hidden" name="ids" value="{{ p.id }}">
             <label class="trocar-foto" title="Trocar a foto de {{ p.nome }}">
               {% include "votacao/_avatar.html" with p=p tamanho="medio" %}
@@ -61,13 +68,24 @@
               <input type="text" name="nome_{{ p.id }}" value="{{ p.nome }}" required aria-label="Nome">
               <span class="senha-pessoa">🔑 Senha <b>{{ p.senha }}</b> ·
                 <button type="submit" form="form-nova-senha" name="id" value="{{ p.id }}" class="link"
-                        data-confirmar="Gerar outra senha para {{ p.nome }}? A atual para de funcionar.">trocar</button></span>
+                        data-confirmar="Gerar outra senha para {{ p.nome }}? A atual para de funcionar.">trocar</button>
+                {% if not p.ativo %}· <span class="estado-desativado">💤 desativado</span>{% endif %}</span>
             </div>
             <div class="acoes-pessoa">
-              <label class="joga"><input type="checkbox" name="joga" value="{{ p.id }}"{% if p.joga %} checked{% endif %}><span>Joga</span></label>
+              {% if p.ativo %}
+                <label class="joga"><input type="checkbox" name="joga" value="{{ p.id }}"{% if p.joga %} checked{% endif %}><span>Joga</span></label>
+              {% else %}
+                <button type="submit" form="form-reativar" name="id" value="{{ p.id }}" class="reativar"
+                        aria-label="Reativar {{ p.nome }}">↩️ Reativar</button>
+              {% endif %}
               {% if p.foto %}
                 <button type="submit" form="form-remover-foto" name="id" value="{{ p.id }}" class="mini"
                         title="Remover foto" aria-label="Remover foto de {{ p.nome }}" data-confirmar="Remover a foto de {{ p.nome }}?">🚫</button>
+              {% endif %}
+              {% if p.ativo %}
+                <button type="submit" form="form-desativar" name="id" value="{{ p.id }}" class="mini"
+                        title="Desativar (não joga e as notas não contam)" aria-label="Desativar {{ p.nome }}"
+                        data-confirmar="Desativar {{ p.nome }}? Sai da lista da semana, some do início e do ranking, e as notas que deu param de contar. Dá para reativar depois.">💤</button>
               {% endif %}
               <button type="submit" form="form-excluir" name="id" value="{{ p.id }}" class="mini"
                       title="Excluir do cadastro" aria-label="Excluir {{ p.nome }}"
@@ -83,6 +101,8 @@
     <form method="post" action="{% url 'votacao:painel_remover_foto' %}" id="form-remover-foto">{% csrf_token %}</form>
     <form method="post" action="{% url 'votacao:painel_excluir' %}" id="form-excluir">{% csrf_token %}</form>
     <form method="post" action="{% url 'votacao:painel_nova_senha' %}" id="form-nova-senha">{% csrf_token %}</form>
+    <form method="post" action="{% url 'votacao:painel_ativo' %}" id="form-desativar">{% csrf_token %}<input type="hidden" name="ativo" value="0"></form>
+    <form method="post" action="{% url 'votacao:painel_ativo' %}" id="form-reativar">{% csrf_token %}<input type="hidden" name="ativo" value="1"></form>
   {% else %}
     <p class="suave">Ninguém cadastrado ainda. Adicione a galera na aba <a href="{% url 'votacao:painel' %}">Semana</a>,
       na caixa "Quem joga esta semana".</p>

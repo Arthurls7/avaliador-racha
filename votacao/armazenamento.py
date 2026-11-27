@@ -145,16 +145,40 @@ def definir_admin(usuario, senha):
 def pessoas():
     """Cadastro completo, em ordem alfabética."""
     # quem foi cadastrado antes de existir "joga"/"foto"/"senha" estava na lista, então joga
-    return [{"foto": None, "joga": True, "senha": None, **p} for p in ler(LOGINS)["pessoas"]]
+    return [{"foto": None, "joga": True, "senha": None, "ativo": True, **p} for p in ler(LOGINS)["pessoas"]]
+
+
+def ativos():
+    """Quem vota, aparece no início e no ranking e tem as notas contadas (o organizador pode desativar alguém)."""
+    return [p for p in pessoas() if p["ativo"]]
 
 
 def jogadores():
-    """Só quem está na lista da semana."""
-    return [p for p in pessoas() if p["joga"]]
+    """Só quem está na lista da semana (e não foi desativado)."""
+    return [p for p in pessoas() if p["joga"] and p["ativo"]]
 
 
 def buscar_jogador(pessoa_id):
     return next((p for p in jogadores() if p["id"] == pessoa_id), None)
+
+
+def buscar_pessoa(pessoa_id):
+    """Qualquer um do cadastro que não foi desativado, jogando ou não esta semana."""
+    return next((p for p in ativos() if p["id"] == pessoa_id), None)
+
+
+def definir_ativo(pessoa_id, ativo):
+    """Desativa (sai da lista da semana, não vota, não aparece e as notas que deu não contam) ou reativa.
+
+    Nada é apagado: reativando, as notas que a pessoa deu e recebeu voltam a contar. Devolve a pessoa ou None.
+    """
+    with editar(LOGINS) as dados:
+        pessoa = next((p for p in dados["pessoas"] if p["id"] == pessoa_id), None)
+        if pessoa:
+            pessoa["ativo"] = ativo
+            if not ativo:
+                pessoa["joga"] = False
+    return pessoa
 
 
 _NUMERACAO = re.compile(r"^\s*\d+\s*[.)\-–:]\s*")  # "1. Fulano", "2 - Ciclano", "3) Beltrano"
@@ -214,10 +238,11 @@ def nova_senha(pessoa_id):
 def adicionar_pessoas(nomes, somente_estes=False):
     """Marca os nomes como jogando esta semana, cadastrando quem ainda não existe.
 
-    Com somente_estes=True, quem não está em `nomes` sai da lista da semana.
-    Devolve (quantos foram cadastrados agora, quantos já existiam).
+    Com somente_estes=True, quem não está em `nomes` sai da lista da semana. Quem foi desativado não entra.
+    Devolve (quantos foram cadastrados agora, quantos já existiam, nomes de quem está desativado).
     """
     novos = existentes = 0
+    desativados = []
     with editar(LOGINS) as dados:
         lista = dados["pessoas"]
         por_nome = {p["nome"].casefold(): p for p in lista}
@@ -228,7 +253,9 @@ def adicionar_pessoas(nomes, somente_estes=False):
                 p["joga"] = False
         for nome in nomes:
             pessoa = por_nome.get(nome.casefold())
-            if pessoa:
+            if pessoa and pessoa.get("ativo", True) is False:
+                desativados.append(pessoa["nome"])
+            elif pessoa:
                 pessoa["joga"] = True
                 existentes += 1
             else:
@@ -240,7 +267,7 @@ def adicionar_pessoas(nomes, somente_estes=False):
                 lista.append(pessoa)
                 novos += 1
         lista.sort(key=lambda p: ordem_alfabetica(p["nome"]))
-    return novos, existentes
+    return novos, existentes, desativados
 
 
 def salvar_cadastro(ids_no_formulario, nomes, jogam):
@@ -254,7 +281,7 @@ def salvar_cadastro(ids_no_formulario, nomes, jogam):
         for p in lista:
             if p["id"] not in ids_no_formulario:
                 continue
-            p["joga"] = p["id"] in jogam
+            p["joga"] = p["id"] in jogam and p.get("ativo", True) is not False  # desativado não joga
             novo = " ".join(nomes.get(p["id"], "").split())
             if novo and novo != p["nome"]:
                 if any(o is not p and o["nome"].casefold() == novo.casefold() for o in lista):

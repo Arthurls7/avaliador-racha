@@ -21,7 +21,7 @@
 {% endif %}
 {% if pessoas %}
   <h1>Quem é você? 👋</h1>
-  <p class="suave">Toque em você e digite a sua senha de 4 números para avaliar a galera do racha desta semana. 🔑
+  <p class="suave">Toque em você e digite a sua senha de 4 números para avaliar a galera do racha. 🔑
     Depois disso, este celular lembra de você por {{ dias_conectado }} dias.</p>
   {% include "votacao/_progresso.html" %}
   <div class="grade">
@@ -38,8 +38,8 @@
 {% else %}
   <div class="cartao vazio">
     <div class="grande">🥅</div>
-    <h1>A lista desta semana ainda não saiu</h1>
-    <p class="suave">Assim que o organizador montar a lista, os nomes aparecem aqui.</p>
+    <h1>Ninguém cadastrado ainda</h1>
+    <p class="suave">Assim que o organizador cadastrar a galera, os nomes aparecem aqui.</p>
   </div>
 {% endif %}
 {% endblock %}

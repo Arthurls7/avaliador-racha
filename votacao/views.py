@@ -48,11 +48,15 @@ def _visual(pessoa):
     }
 
 
-def _jogador_ou_volta(request, pessoa_id):
-    """O jogador como está salvo (com a senha), ou None com aviso se não joga esta semana."""
-    pessoa = arm.buscar_jogador(pessoa_id)
+def _pessoa_ou_volta(request, pessoa_id):
+    """A pessoa como está salva (com a senha), ou None com aviso se não está no cadastro.
+
+    Todo mundo do cadastro vota e aparece no ranking, jogando ou não esta semana; a lista da semana
+    ("joga") só decide quem entra no sorteio das linhas.
+    """
+    pessoa = arm.buscar_pessoa(pessoa_id)
     if not pessoa:
-        messages.error(request, "Essa pessoa não está na lista desta semana.")
+        messages.error(request, "Essa pessoa não está no cadastro (ou foi desativada pelo organizador).")
     return pessoa
 
 
@@ -73,12 +77,12 @@ def _conectar(request, pessoa):
 def _conectado(request):
     """O jogador conectado neste celular (com a conexão ainda valendo), ou None."""
     pessoa_id = (request.session.get(SESSAO_JOGADOR) or {}).get("id")
-    pessoa = arm.buscar_jogador(pessoa_id) if pessoa_id else None
+    pessoa = arm.buscar_pessoa(pessoa_id) if pessoa_id else None
     return pessoa if pessoa and _logado_como(request, pessoa) else None
 
 
 def _outros(pessoa_id):
-    return [_visual(p) for p in arm.jogadores() if p["id"] != pessoa_id]
+    return [_visual(p) for p in arm.ativos() if p["id"] != pessoa_id]
 
 
 def _data(registro):
@@ -105,8 +109,9 @@ def _montar_linhas(ids_por_linha, jogadores):
     return linhas, fora
 
 
-def _medias_da_semana(jogadores):
-    return {linha["id"]: linha["nota"] for linha in resultados(jogadores, arm.avaliacoes())}
+def _medias():
+    """Média de cada um do cadastro, com as notas de todo mundo que votou (a mesma do ranking; desativados não contam)."""
+    return {linha["id"]: linha["nota"] for linha in resultados(arm.ativos(), arm.avaliacoes())}
 
 
 def foto(request, arquivo):
@@ -126,7 +131,7 @@ def inicio(request):
     avaliacoes = arm.avaliacoes()
     conectado = _conectado(request)
     pessoas = [{**_visual(p), "avaliou": p["id"] in avaliacoes, "voce": bool(conectado) and p["id"] == conectado["id"]}
-               for p in arm.jogadores()]
+               for p in arm.ativos()]
     return render(request, "votacao/inicio.html", {
         "pessoas": pessoas,
         "conectado": _visual(conectado) if conectado else None,
@@ -136,7 +141,7 @@ def inicio(request):
 
 
 def _progresso(pessoas):
-    """Quantos da semana já votaram, para a barrinha de progresso."""
+    """Quantos do cadastro já votaram, para a barrinha de progresso."""
     votaram = sum(1 for p in pessoas if p["avaliou"])
     return {"votaram": votaram, "total": len(pessoas),
             "porcento": round(100 * votaram / len(pessoas)) if pessoas else 0}
@@ -237,11 +242,11 @@ def _dia(registro):
 
 def ver_ranking(request):
     """Pódio, seções e tags; a média de cada um não aparece. Empates já vêm desfeitos por resultados()."""
-    jogadores = [_visual(p) for p in arm.jogadores()]
+    todos = [_visual(p) for p in arm.ativos()]  # todo mundo do cadastro (menos os desativados), jogando ou não
     avaliacoes = arm.avaliacoes()
-    linhas = resultados(jogadores, avaliacoes)
+    linhas = resultados(todos, avaliacoes)
     com_nota = [linha for linha in linhas if linha["nota"] is not None]
-    votaram = {p["id"] for p in jogadores if p["id"] in avaliacoes}
+    votaram = {p["id"] for p in todos if p["id"] in avaliacoes}
     semanas = arm.historico()
     extras = destaques(com_nota, votaram, semanas)
     ranking = [{"posicao": i, "medalha": MEDALHAS.get(i, ""), "pessoa": linha["pessoa"], **extras[linha["id"]]}
@@ -252,7 +257,7 @@ def ver_ranking(request):
         "disputa": ranking[3:6],
         "resto": ranking[6:],
         "sem_nota": [linha["pessoa"] for linha in linhas if linha["nota"] is None],
-        "progresso": _progresso([{"avaliou": p["id"] in votaram} for p in jogadores]),
+        "progresso": _progresso([{"avaliou": p["id"] in votaram} for p in todos]),
         "semanas_anteriores": [{
             "dia": _dia(semana),
             "podio": [{"medalha": MEDALHAS[i + 1], "nome": r["nome"]} for i, r in enumerate(semana["ranking"][:3])],
@@ -262,7 +267,7 @@ def ver_ranking(request):
 
 def entrar(request, pessoa_id):
     """Pede a senha de 4 números do jogador (para votar, ou para sugerir troca com ?para=trocar)."""
-    jogador = _jogador_ou_volta(request, pessoa_id)
+    jogador = _pessoa_ou_volta(request, pessoa_id)
     if not jogador:
         return redirect("votacao:inicio")
     # destino depois da senha: só estes dois (nada de endereço vindo de fora)
@@ -306,7 +311,7 @@ def sair_jogador(request):
 
 
 def avaliar(request, pessoa_id):
-    jogador = _jogador_ou_volta(request, pessoa_id)
+    jogador = _pessoa_ou_volta(request, pessoa_id)
     if not jogador:
         return redirect("votacao:inicio")
     if not _logado_como(request, jogador):  # só o próprio jogador, com a senha dele
@@ -411,7 +416,7 @@ def _avisar_senhas_criadas(request):
 @_exige_admin
 def painel(request):
     _avisar_senhas_criadas(request)
-    linhas = resultados([_visual(p) for p in arm.jogadores()], arm.avaliacoes())
+    linhas = resultados([_visual(p) for p in arm.ativos()], arm.avaliacoes())
     for linha in linhas:
         linha["nota_fmt"] = formatar(linha["nota"])
         linha["avaliou_data"] = _data(linha["avaliou"])
@@ -432,13 +437,15 @@ def painel(request):
 
 def _retrato_da_semana():
     """O que vai para o histórico: ranking (com médias), quem ficou sem nota, as linhas e quantos votaram."""
-    jogadores = arm.jogadores()
+    pessoas = arm.ativos()
+    jogadores = [p for p in pessoas if p["joga"]]
     avaliacoes = arm.avaliacoes()
-    linhas_ranking = resultados(jogadores, avaliacoes)
+    linhas_ranking = resultados(pessoas, avaliacoes)
     linhas, _ = _montar_linhas(arm.linhas()["linhas"], jogadores)
     return {
+        "pessoas": len(pessoas),
         "jogadores": len(jogadores),
-        "votaram": sum(1 for p in jogadores if p["id"] in avaliacoes),
+        "votaram": sum(1 for p in pessoas if p["id"] in avaliacoes),
         "ranking": [{"id": l["id"], "nome": l["nome"], "nota": round(l["nota"], 4), "qtd": l["qtd"]}
                     for l in linhas_ranking if l["nota"] is not None],
         "sem_nota": [{"id": l["id"], "nome": l["nome"]} for l in linhas_ranking if l["nota"] is None],
@@ -450,8 +457,8 @@ def _retrato_da_semana():
 @require_POST
 def painel_fechar_semana(request):
     retrato = _retrato_da_semana()
-    if not retrato["jogadores"]:
-        messages.error(request, "Ninguém na lista desta semana: não há o que guardar.")
+    if not retrato["ranking"] and not retrato["linhas"]:
+        messages.error(request, "Ninguém tem nota e não há linhas sorteadas: não há o que guardar.")
         return redirect("votacao:painel")
     arm.guardar_semana(retrato)
     feito = ["📚 Semana guardada no histórico"]
@@ -481,6 +488,7 @@ def painel_cadastro(request):
     _avisar_senhas_criadas(request)
     return _render_painel(request, "votacao/painel_cadastro.html", {
         "cadastro": [{**_visual(p), "senha": p["senha"]} for p in arm.pessoas()],
+        "desativados": sum(1 for p in arm.pessoas() if not p["ativo"]),
         "total_avaliacoes": len(arm.avaliacoes()),
     })
 
@@ -501,13 +509,17 @@ def painel_adicionar(request):
     if not nomes:
         messages.error(request, "Escreva pelo menos um nome.")
         return redirect("votacao:painel")
-    novos, existentes = arm.adicionar_pessoas(nomes, somente_estes=bool(request.POST.get("somente_estes")))
+    novos, existentes, desativados = arm.adicionar_pessoas(nomes, somente_estes=bool(request.POST.get("somente_estes")))
     partes = []
     if novos:
         partes.append(f"{novos} cadastrado(s) agora (as senhas estão na aba Cadastro)")
     if existentes:
         partes.append(f"{existentes} já estava(m) no cadastro")
-    messages.success(request, "Lista da semana atualizada: " + " e ".join(partes) + ".")
+    if partes:
+        messages.success(request, "Lista da semana atualizada: " + " e ".join(partes) + ".")
+    if desativados:
+        messages.error(request, f"Ficou fora da lista porque está desativado(a): {', '.join(desativados)}. "
+                                "Para jogar, reative na aba Cadastro.")
     return redirect("votacao:painel")
 
 
@@ -551,6 +563,22 @@ def painel_excluir(request):
 
 @_exige_admin
 @require_POST
+def painel_ativo(request):
+    """Desativa ou reativa alguém. Desativado: não joga, não vota, some do início e do ranking e as notas que
+    deu não contam. Nada é apagado; reativando, tudo volta."""
+    ativo = request.POST.get("ativo") == "1"
+    pessoa = arm.definir_ativo(request.POST.get("id", ""), ativo)
+    if pessoa and ativo:
+        messages.success(request, f"✅ {pessoa['nome']} foi reativado(a): volta a votar e a aparecer no ranking, e as "
+                                  "notas que deu voltam a contar. Marque \"Joga\" se for jogar esta semana.")
+    elif pessoa:
+        messages.success(request, f"💤 {pessoa['nome']} foi desativado(a): não joga, sumiu do início e do ranking, e as "
+                                  "notas que deu não contam mais. Nada foi apagado: reativando, tudo volta.")
+    return redirect("votacao:painel_cadastro")
+
+
+@_exige_admin
+@require_POST
 def painel_zerar(request):
     arm.zerar_avaliacoes()
     messages.success(request, "Todas as avaliações foram apagadas.")
@@ -563,7 +591,7 @@ def painel_zerar(request):
 def painel_linhas(request):
     dados = arm.linhas()
     jogadores = [_visual(p) for p in arm.jogadores()]
-    medias = _medias_da_semana(jogadores)
+    medias = _medias()
     forca = forcas([p["id"] for p in jogadores], medias)
     linhas, fora = _montar_linhas(dados["linhas"], jogadores)
 
@@ -673,7 +701,7 @@ def painel_linhas_sortear(request):
         diferenca_max = anterior["diferenca_max"]
 
     try:
-        novas, dif = sortear(ids, forcas(ids, _medias_da_semana(jogadores)), tams, equilibrar, diferenca_max,
+        novas, dif = sortear(ids, forcas(ids, _medias()), tams, equilibrar, diferenca_max,
                              juntos=anterior["juntos"], separados=anterior["separados"])
     except GrupoNaoCabe as erro:
         messages.error(request, f"Não deu para sortear: {_nomes_em_frase(nomes[j] for j in erro.grupo)} têm que cair "
@@ -772,7 +800,7 @@ def painel_trocas(request):
     linhas, _ = _montar_linhas(dados["linhas"], jogadores)
     ids = [[p["id"] for p in linha] for linha in linhas]
     onde = {j: i + 1 for i, linha in enumerate(ids) for j in linha}
-    forca = forcas([p["id"] for p in jogadores], _medias_da_semana(jogadores))
+    forca = forcas([p["id"] for p in jogadores], _medias())
 
     def nome(pid):
         return nomes.get(pid, "alguém que saiu")

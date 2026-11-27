@@ -55,7 +55,7 @@ def resultados(pessoas, avaliacoes):
     recebidas = {pid: [] for pid in ids}
 
     for avaliador, registro in avaliacoes.items():
-        if avaliador not in ids:  # quem não joga esta semana não conta
+        if avaliador not in ids:  # quem não está na lista recebida (ex.: foi excluído) não conta
             continue
         for pid, valor in registro.get("notas", {}).items():
             if pid in recebidas and pid != avaliador:

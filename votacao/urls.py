@@ -22,6 +22,7 @@ urlpatterns = [
     path("painel/remover-foto/", views.painel_remover_foto, name="painel_remover_foto"),
     path("painel/nova-senha/", views.painel_nova_senha, name="painel_nova_senha"),
     path("painel/excluir/", views.painel_excluir, name="painel_excluir"),
+    path("painel/ativo/", views.painel_ativo, name="painel_ativo"),
     path("painel/zerar/", views.painel_zerar, name="painel_zerar"),
     path("painel/fechar-semana/", views.painel_fechar_semana, name="painel_fechar_semana"),
     path("painel/limpar-historico/", views.painel_limpar_historico, name="painel_limpar_historico"),

@@ -259,22 +259,90 @@ class FluxoTest(SimpleTestCase):
 
     def test_adicionar_marca_quem_existe_e_cadastra_quem_e_novo(self):
         arm.salvar_cadastro({"ana", "bruno", "caio", "davi"}, {}, set())  # ninguém joga
-        novos, existentes = arm.adicionar_pessoas(["ana", "Eva"])
-        self.assertEqual((novos, existentes), (1, 1))
+        novos, existentes, desativados = arm.adicionar_pessoas(["ana", "Eva"])
+        self.assertEqual((novos, existentes, desativados), (1, 1, []))
         self.assertEqual(self.joga(), {"Ana": True, "Bruno": False, "Caio": False, "Davi": False, "Eva": True})
 
     def test_lista_completa_da_semana(self):
         arm.adicionar_pessoas(["Bruno", "Eva"], somente_estes=True)
         self.assertEqual(self.joga(), {"Ana": False, "Bruno": True, "Caio": False, "Davi": False, "Eva": True})
 
-    def test_quem_nao_joga_nao_aparece_nem_avalia(self):
-        arm.adicionar_pessoas(["Ana", "Bruno", "Caio"], somente_estes=True)
-        self.assertNotContains(self.client.get(reverse("votacao:inicio")), "Davi")
-        self.assertRedirects(self.client.get(reverse("votacao:avaliar", args=["davi"])),
-                             reverse("votacao:inicio"))
-        self.assertRedirects(self.client.get(reverse("votacao:entrar", args=["davi"])), reverse("votacao:inicio"))
+    def test_desativar_pessoa(self):
+        # a Ana dá notas bem diferentes das do Bruno
+        arm.salvar_avaliacao("ana", {"escala": 10, "notas": {"bruno": 2, "caio": 10, "davi": 6}})
+        arm.salvar_avaliacao("bruno", {"escala": 10, "notas": {"ana": 9, "caio": 4, "davi": 6}})
+        self.logar("ana")  # e está conectada neste celular
+        self.entrar()
+        resposta = self.client.post(reverse("votacao:painel_ativo"), {"id": "ana", "ativo": "0"}, follow=True)
+        self.assertRedirects(resposta, reverse("votacao:painel_cadastro"))
+        self.assertContains(resposta, "💤 Ana foi desativado(a)")
+        self.assertContains(resposta, "Todo mundo que já jogou (4, 1 desativado)")
+        self.assertContains(resposta, 'aria-label="Reativar Ana"')
+        self.assertNotContains(resposta, 'name="joga" value="ana"')
+        self.assertNotContains(resposta, 'aria-label="Desativar Ana"')
+        self.assertContains(resposta, 'aria-label="Desativar Bruno"')
+        ana = next(p for p in arm.pessoas() if p["id"] == "ana")
+        self.assertEqual((ana["ativo"], ana["joga"]), (False, False))
+        self.assertEqual(sorted(arm.avaliacoes()), ["ana", "bruno"])  # nada foi apagado
+
+        # some do início e do ranking, e as notas que deu não contam (Caio fica com o 4 do Bruno, não com 7)
+        inicio = self.client.get(reverse("votacao:inicio"))
+        self.assertNotContains(inicio, reverse("votacao:avaliar", args=["ana"]))
+        self.assertContains(inicio, "🗳️ 1 de 3 já votaram")
+        ranking = self.client.get(reverse("votacao:ranking"))
+        self.assertEqual(self.posicoes(ranking), [(1, "Davi"), (2, "Caio")])
+        self.assertNotContains(ranking, "Ana")
+        medias = {l["id"]: l["nota"] for l in resultados(arm.ativos(), arm.avaliacoes())}
+        self.assertEqual(medias, {"bruno": None, "caio": 4, "davi": 6})
+        # não vota mais (nem com a conexão que já tinha) e ninguém dá nota para ela
+        self.assertRedirects(self.client.get(reverse("votacao:avaliar", args=["ana"])), reverse("votacao:inicio"))
+        self.assertRedirects(self.client.get(reverse("votacao:entrar", args=["ana"])), reverse("votacao:inicio"))
+        self.logar("bruno")
+        self.assertNotContains(self.client.get(reverse("votacao:avaliar", args=["bruno"])), 'name="nota_ana"')
+
+        # não joga: fica fora do sorteio, e nem a lista da semana nem o cadastro a colocam de volta
+        self.client.post(reverse("votacao:painel_linhas_sortear"), {"divisao": "por_linha", "por_linha": "2"})
+        self.assertEqual(sorted(sum(arm.linhas()["linhas"], [])), ["bruno", "caio", "davi"])
+        resposta = self.client.post(reverse("votacao:painel_adicionar"), {"nomes": "Ana\nBruno"}, follow=True)
+        self.assertContains(resposta, "Ficou fora da lista porque está desativado(a): Ana.")
+        arm.salvar_cadastro({"ana"}, {}, {"ana"})
+        self.assertIsNone(arm.buscar_jogador("ana"))
+
+        # reativar: tudo volta, menos a lista da semana (o organizador marca "Joga" se for jogar)
+        resposta = self.client.post(reverse("votacao:painel_ativo"), {"id": "ana", "ativo": "1"}, follow=True)
+        self.assertContains(resposta, "✅ Ana foi reativado(a)")
+        self.assertContains(resposta, 'name="joga" value="ana"')
+        medias = {l["id"]: l["nota"] for l in resultados(arm.ativos(), arm.avaliacoes())}
+        self.assertEqual(medias, {"ana": 9, "bruno": 2, "caio": 7, "davi": 6})
+        self.assertContains(self.client.get(reverse("votacao:inicio")), reverse("votacao:avaliar", args=["ana"]))
+        self.assertIsNone(arm.buscar_jogador("ana"))
+
+    def test_quem_nao_joga_vota_e_aparece_mas_fica_fora_do_sorteio(self):
+        arm.adicionar_pessoas(["Ana", "Bruno", "Caio"], somente_estes=True)  # Davi fora da lista da semana
+        # aparece no início, e a barra de progresso conta todo mundo do cadastro
+        resposta = self.client.get(reverse("votacao:inicio"))
+        self.assertContains(resposta, reverse("votacao:avaliar", args=["davi"]))
+        self.assertContains(resposta, "🗳️ 0 de 4 já votaram")
+        # vota e é avaliado
+        self.logar("davi")
+        self.client.post(reverse("votacao:avaliar", args=["davi"]), {"nota_ana": "8", "nota_bruno": "6", "nota_caio": "4"})
         self.logar("ana")
-        self.assertNotContains(self.client.get(reverse("votacao:avaliar", args=["ana"])), "nota_davi")
+        self.assertContains(self.client.get(reverse("votacao:avaliar", args=["ana"])), 'name="nota_davi"')
+        self.client.post(reverse("votacao:avaliar", args=["ana"]), {"nota_bruno": "10", "nota_caio": "2", "nota_davi": "9"})
+        self.assertEqual(sorted(arm.avaliacoes()), ["ana", "davi"])
+        # as notas dele contam e ele entra no ranking (Bruno e Ana têm 8; Bruno recebeu um 10, então fica na frente)
+        resposta = self.client.get(reverse("votacao:ranking"))
+        self.assertEqual(self.posicoes(resposta), [(1, "Davi"), (2, "Bruno"), (3, "Ana"), (4, "Caio")])
+        self.assertContains(resposta, "🗳️ 2 de 4 já votaram")
+        # ...mas fica fora do sorteio das linhas, que usa as médias com as notas de todo mundo
+        self.entrar()
+        self.client.post(reverse("votacao:painel_linhas_sortear"), {"divisao": "por_linha", "por_linha": "2"})
+        self.assertEqual(sorted(sum(arm.linhas()["linhas"], [])), ["ana", "bruno", "caio"])
+        self.assertNotContains(self.client.get(reverse("votacao:painel_linhas")), "sem nota")  # a nota da Ana veio do Davi
+        # o painel mostra todo mundo no resultado e avisa quem não joga
+        painel = self.client.get(reverse("votacao:painel"))
+        self.assertContains(painel, "2 de 4 pessoas já avaliaram")
+        self.assertContains(painel, " · não joga esta semana", count=1)
 
     def test_renomear_mantem_id_e_avaliacoes(self):
         arm.salvar_avaliacao("ana", {"notas": {"bruno": 5}})
@@ -305,7 +373,8 @@ class FluxoTest(SimpleTestCase):
     def test_dados_antigos_sem_joga_e_foto(self):
         (self.pasta / "dados" / "logins.json").write_text(
             json.dumps({"admin": None, "pessoas": [{"id": "ze", "nome": "Zé"}]}), encoding="utf-8")
-        self.assertEqual(arm.jogadores(), [{"id": "ze", "nome": "Zé", "foto": None, "joga": True, "senha": None}])
+        self.assertEqual(arm.jogadores(), [{"id": "ze", "nome": "Zé", "foto": None, "joga": True, "senha": None,
+                                            "ativo": True}])
 
     # ---------- fotos ----------
 
@@ -1040,11 +1109,12 @@ class FluxoTest(SimpleTestCase):
         for nome in ["painel_adicionar", "painel_cadastro_salvar", "painel_excluir", "painel_zerar", "painel_remover_foto",
                      "painel_nova_senha", "painel_linhas_sortear", "painel_linhas_publicar",
                      "painel_linhas_despublicar", "painel_linhas_ajustar", "painel_linhas_regra",
-                     "painel_fechar_semana", "painel_limpar_historico"]:
+                     "painel_fechar_semana", "painel_limpar_historico", "painel_ativo"]:
             resposta = self.client.post(reverse(f"votacao:{nome}"), {"nomes": "Hacker", "id": "ana", "ids": ["ana"],
                                                                      "a": "ana", "b": "bruno", "regra": "juntos"})
             self.assertRedirects(resposta, reverse("votacao:painel_entrar"))
         self.assertEqual(len(arm.jogadores()), 4)
+        self.assertEqual(len(arm.ativos()), 4)
         self.assertEqual(arm.linhas()["juntos"], [])
         self.assertEqual(arm.historico(), [])
         self.assertEqual(self.senha("ana"), senha_ana)
@@ -1131,7 +1201,7 @@ class FluxoTest(SimpleTestCase):
         self.assertRedirects(resposta, reverse("votacao:painel") + "#historico")
         self.assertContains(resposta, "📚 Semana guardada no histórico. Bora para a próxima! ⚽")
         [semana] = arm.historico()
-        self.assertEqual((semana["jogadores"], semana["votaram"]), (4, 2))
+        self.assertEqual((semana["pessoas"], semana["jogadores"], semana["votaram"]), (4, 4, 2))
         self.assertEqual([(r["nome"], r["nota"], r["qtd"]) for r in semana["ranking"]],
                          [("Bruno", 8.0, 1), ("Caio", 7.5, 2), ("Ana", 7.0, 1)])
         self.assertEqual(semana["sem_nota"], [{"id": "davi", "nome": "Davi"}])

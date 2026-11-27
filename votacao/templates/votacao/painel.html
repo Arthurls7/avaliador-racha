@@ -39,14 +39,14 @@
           {% include "votacao/_avatar.html" with p=l.pessoa tamanho="pequeno" %}
           <span class="info">
             <strong>{{ l.nome }}</strong>
-            {% if l.avaliou %}<span class="suave pequeno"><span class="ok">✓</span> avaliou {{ l.avaliou_data }}</span>{% else %}<span class="suave pequeno">ainda não avaliou</span>{% endif %}
+            <span class="suave pequeno">{% if l.avaliou %}<span class="ok">✓</span> avaliou {{ l.avaliou_data }}{% else %}ainda não avaliou{% endif %}{% if not l.pessoa.joga %} · não joga esta semana{% endif %}</span>
           </span>
           <span class="nota-final"><strong>{{ l.nota_fmt }}</strong><small>{{ l.qtd }} nota{{ l.qtd|pluralize }}</small></span>
         </li>
       {% endfor %}
     </ol>
   {% else %}
-    <p class="suave">Ninguém na lista desta semana ainda. Monte a lista logo abaixo.</p>
+    <p class="suave">Ninguém cadastrado ainda. Adicione a galera logo abaixo.</p>
   {% endif %}
 </section>
 
@@ -57,7 +57,7 @@
     <textarea name="nomes" rows="6" placeholder="Um nome por linha. Pode colar a lista do WhatsApp."></textarea>
     <label class="opcao-check">
       <input type="checkbox" name="somente_estes">
-      <span>Esta é a lista completa da semana (quem não estiver aqui fica de fora desta vez)</span>
+      <span>Esta é a lista completa da semana (quem não estiver aqui fica fora do sorteio das linhas desta vez)</span>
     </label>
     <p class="suave pequeno">Quem já está no cadastro só é marcado como "joga"; quem é novo é cadastrado na hora.
       Numeração como "1." ou "2 -" no começo da linha é ignorada. Fotos, nomes e quem joga também dá para
@@ -91,7 +91,7 @@
           <details>
             <summary>
               <strong>Semana fechada em {{ s.quando }}</strong>
-              <span class="suave pequeno">{{ s.votaram }} de {{ s.jogadores }} votaram</span>
+              <span class="suave pequeno">{{ s.votaram }} de {{ s.pessoas|default:s.jogadores }} votaram</span>
               <span class="podio-mini">{% for p in s.podio %}{{ p.medalha }} {{ p.nome }}{% if not forloop.last %} · {% endif %}{% endfor %}</span>
             </summary>
             {% if s.ranking_fmt %}
